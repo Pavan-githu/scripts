@@ -10,19 +10,36 @@ Steps:
   3. Verify build succeeded (check Tasks Summary line in log)
   4. Find the built .wic.bz2 image in DEPLOYDIR
   5. Compute SHA-256 + file size
-  6. Create a GitHub Release and upload the image → get download URL
-  7. ABI-encode + send registerFirmware() to blockchain via JSON-RPC
-  8. Write /tmp/firmware-meta.json for baking onto SD card
+  6. Sign the firmware image digest via Google Cloud KMS (HSM-backed key)
+  7. Create a GitHub Release, upload the image + detached signature → get download URL
+  8. ABI-encode + send registerFirmware() to blockchain via JSON-RPC
+  9. Write /tmp/firmware-meta.json for baking onto SD card
 
 Dependencies:
-    pip install eth-account requests
+    pip install eth-account requests google-cloud-kms
 
 Environment variables (required at runtime):
-    RPC_URL         Ethereum JSON-RPC, e.g. http://127.0.0.1:8545
-    CONTRACT_ADDR   Deployed IoTFirmwareRegistry contract address (0x...)
-    SIGNER_KEY      Ethereum private key of build host / CI signer (0x...)
-    GITHUB_TOKEN    GitHub personal access token (repo scope)
-    VERSION         Firmware version string, e.g. 0.1.0  (default: 0.1.0)
+    RPC_URL          Ethereum JSON-RPC, e.g. http://127.0.0.1:8545
+    CONTRACT_ADDR    Deployed IoTFirmwareRegistry contract address (0x...)
+    SIGNER_KEY       Ethereum private key of build host / CI signer (0x...)
+    GITHUB_TOKEN     GitHub personal access token (repo scope)
+    VERSION          Firmware version string, e.g. 0.1.0  (default: 0.1.0)
+
+    -- Google Cloud KMS (HSM signing) --
+    GCP_PROJECT      GCP project ID, e.g. my-iot-project
+    GCP_LOCATION     KMS location,   e.g. global  (default: global)
+    GCP_KEYRING      KMS key ring,   e.g. firmware-signing
+    GCP_KEY_NAME     KMS key name,   e.g. firmware-key
+    GCP_KEY_VERSION  Key version number (default: 1)
+    GOOGLE_APPLICATION_CREDENTIALS  Path to service-account JSON (if not on GCE)
+
+    One-time GCP KMS setup:
+        gcloud kms keyrings create firmware-signing --location=global
+        gcloud kms keys create firmware-key \
+            --keyring=firmware-signing --location=global \
+            --purpose=asymmetric-signing \
+            --default-algorithm=rsa-sign-pss-2048-sha256 \
+            --protection-level=hsm
 
 Usage:
     cd /home/pg3930/capstone1/raceiotprj
@@ -65,7 +82,27 @@ CONTRACT_ADDR = os.environ.get("CONTRACT_ADDR", "0xYOUR_CONTRACT_ADDRESS")
 SIGNER_KEY    = os.environ.get("SIGNER_KEY",    "")
 GITHUB_TOKEN  = os.environ.get("GITHUB_TOKEN",  "")
 GITHUB_REPO   = "Pavan-githu/meta-userapp-package"
-VERSION       = os.environ.get("VERSION",       "0.1.0")
+# Read version from the iot-gateway VERSION file (first line only);
+# env var overrides if set.
+_VERSION_FILE = os.path.join(
+    PROJECT_ROOT,
+    "sources/meta-userapp-package/recipes-apps/iot-gateway/VERSION"
+)
+_version_from_file = (
+    open(_VERSION_FILE).readline().strip()
+    if os.path.exists(_VERSION_FILE) else "0.1.0"
+)
+VERSION       = os.environ.get("VERSION", _version_from_file)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Google Cloud KMS (HSM signing) config
+# ─────────────────────────────────────────────────────────────────────────────
+
+GCP_PROJECT     = os.environ.get("GCP_PROJECT",     "")
+GCP_LOCATION    = os.environ.get("GCP_LOCATION",    "global")
+GCP_KEYRING     = os.environ.get("GCP_KEYRING",     "firmware-signing")
+GCP_KEY_NAME    = os.environ.get("GCP_KEY_NAME",    "firmware-key")
+GCP_KEY_VERSION = os.environ.get("GCP_KEY_VERSION", "1")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Step 1 + 2 + 3: Build with bitbake and verify success
@@ -77,7 +114,7 @@ def run_bitbake_build() -> None:
     a single bash -c call (required because oe-init-build-env uses 'source').
     Streams output live. Raises RuntimeError if build fails.
     """
-    print(f"[1/5] Sourcing OE environment and building {IMAGE_RECIPE}...")
+    print(f"[1/6] Sourcing OE environment and building {IMAGE_RECIPE}...")
     print(f"      Project root : {PROJECT_ROOT}")
     print(f"      OE init      : {OE_INIT}")
     print()
@@ -146,7 +183,7 @@ def run_bitbake_build() -> None:
             f"Check full log: {log_path}"
         )
 
-    print(f"[1/5] Build verified: {success_line}")
+    print(f"[1/6] Build verified: {success_line}")
     os.unlink(log_path)
 
 
@@ -159,7 +196,7 @@ def find_image() -> tuple[str, str]:
     Returns (full_path, filename) of the most recently modified .wic.bz2
     image in DEPLOY_DIR.
     """
-    print(f"[2/5] Locating firmware image in {DEPLOY_DIR} ...")
+    print(f"[2/6] Locating firmware image in {DEPLOY_DIR} ...")
     candidates = [
         f for f in os.listdir(DEPLOY_DIR)
         if f.endswith(".wic.bz2") and IMAGE_RECIPE in f
@@ -184,7 +221,7 @@ def find_image() -> tuple[str, str]:
 
 def compute_metadata(image_path: str) -> dict:
     """SHA-256 + file size + firmware_id + git commit."""
-    print("[3/5] Computing metadata...")
+    print("[3/6] Computing metadata...")
 
     sha256  = hashlib.sha256()
     size    = 0
@@ -231,7 +268,76 @@ def compute_metadata(image_path: str) -> dict:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Step 6: GitHub Release + upload
+# Step 4 (new): Sign firmware with Google Cloud KMS (HSM-backed)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def sign_firmware_hsm(image_path: str, sha256_bytes: bytes) -> tuple[bytes, str]:
+    """
+    Signs the firmware image's SHA-256 digest using a Google Cloud KMS
+    HSM-backed RSA-PSS 2048-bit key (RSA_SIGN_PSS_2048_SHA256).
+    The private key never leaves the HSM.
+
+    The detached DER-encoded signature is written next to the image:
+        <image_path>.sig
+
+    To verify offline (RSA-PSS 2048 example):
+        # export public key once:
+        gcloud kms keys versions get-public-key 1 \\
+            --keyring=$GCP_KEYRING --location=$GCP_LOCATION \\
+            --key=$GCP_KEY_NAME --output-file=firmware-pubkey.pem
+        # verify:
+        openssl dgst -sha256 -sigopt rsa_padding_mode:pss \\
+            -sigopt rsa_pss_saltlen:-1 \\
+            -verify firmware-pubkey.pem \\
+            -signature <image>.wic.bz2.sig <image>.wic.bz2
+
+    Returns (signature_bytes, sig_file_path).
+    """
+    try:
+        from google.cloud import kms as gcp_kms
+    except ImportError:
+        raise RuntimeError(
+            "google-cloud-kms not installed. "
+            "Run: pip install google-cloud-kms"
+        )
+
+    print("[4/6] Signing firmware with Google Cloud KMS (HSM)...")
+
+    if not all([GCP_PROJECT, GCP_KEYRING, GCP_KEY_NAME]):
+        raise RuntimeError(
+            "Set GCP_PROJECT, GCP_KEYRING, and GCP_KEY_NAME "
+            "environment variables to enable HSM signing."
+        )
+
+    client = gcp_kms.KeyManagementServiceClient()
+    key_version_name = client.crypto_key_version_path(
+        GCP_PROJECT, GCP_LOCATION, GCP_KEYRING, GCP_KEY_NAME, GCP_KEY_VERSION
+    )
+
+    # Fetch key metadata so we can show the algorithm
+    pub_key = client.get_public_key(request={"name": key_version_name})
+    print(f"      HSM Key      : {key_version_name}")
+    print(f"      Algorithm    : {pub_key.algorithm.name}")
+    print(f"      Digest (hex) : {sha256_bytes.hex()}")
+
+    # Sign — the digest type (sha256) must match the key algorithm
+    digest   = gcp_kms.Digest(sha256=sha256_bytes)
+    response = client.asymmetric_sign(
+        request={"name": key_version_name, "digest": digest}
+    )
+
+    signature_bytes = response.signature
+    sig_path        = image_path + ".sig"
+    with open(sig_path, "wb") as f:
+        f.write(signature_bytes)
+
+    print(f"      Signature    : {signature_bytes.hex()[:48]}...")
+    print(f"      Sig file     : {sig_path}")
+    return signature_bytes, sig_path
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Step 5 (was 4): GitHub Release + upload
 # ─────────────────────────────────────────────────────────────────────────────
 
 GH_API = "https://api.github.com"
@@ -242,9 +348,10 @@ def gh_headers() -> dict:
         "Accept": "application/vnd.github+json",
     }
 
-def upload_to_github(image_path: str, filename: str, meta: dict) -> str:
-    """Create GitHub release, upload image, return browser_download_url."""
-    print("[4/5] Creating GitHub Release and uploading image...")
+def upload_to_github(image_path: str, filename: str, meta: dict,
+                     sig_path: str | None = None) -> str:
+    """Create GitHub release, upload image (+ optional .sig), return browser_download_url."""
+    print("[5/6] Creating GitHub Release and uploading image...")
 
     tag      = f"v{VERSION}-{meta['build_ts']}"
     rel_name = f"Firmware v{VERSION} ({BOARD})"
@@ -284,6 +391,23 @@ def upload_to_github(image_path: str, filename: str, meta: dict) -> str:
 
     download_url = r2.json()["browser_download_url"]
     print(f"      Download URL: {download_url}")
+
+    # Upload detached HSM signature alongside the image
+    if sig_path and os.path.exists(sig_path):
+        sig_filename = os.path.basename(sig_path)
+        print(f"      Uploading signature {sig_filename} ...")
+        with open(sig_path, "rb") as f:
+            r3 = requests.post(
+                upload_url,
+                headers={**gh_headers(),
+                         "Content-Type": "application/octet-stream"},
+                params={"name": sig_filename},
+                data=f,
+                timeout=30,
+            )
+        r3.raise_for_status()
+        print(f"      Sig URL      : {r3.json()['browser_download_url']}")
+
     return download_url
 
 
@@ -342,7 +466,7 @@ def rpc_call(method: str, params: list) -> dict:
 
 def register_on_blockchain(meta: dict, download_url: str) -> str:
     """Sign and broadcast registerFirmware tx. Returns tx hash."""
-    print("[5/5] Registering metadata on blockchain...")
+    print("[6/6] Registering metadata on blockchain...")
 
     calldata  = build_register_calldata(meta, download_url)
     acct      = Account.from_key(SIGNER_KEY)
@@ -378,13 +502,22 @@ def register_on_blockchain(meta: dict, download_url: str) -> str:
 # Write on-device meta
 # ─────────────────────────────────────────────────────────────────────────────
 
-def write_device_meta(meta: dict, download_url: str, tx_hash: str) -> None:
+def write_device_meta(meta: dict, download_url: str, tx_hash: str,
+                      signature_hex: str | None = None) -> None:
     record = {
-        "firmware_id":  meta["firmware_id"],
-        "sha256":       meta["sha256"],
-        "version":      meta["version"],
-        "download_url": download_url,
+        "firmware_id":   meta["firmware_id"],
+        "sha256":        meta["sha256"],
+        "version":       meta["version"],
+        "download_url":  download_url,
+        "tx_hash":       tx_hash,
     }
+    if signature_hex:
+        record["hsm_signature"] = signature_hex
+        record["hsm_key"] = (
+            f"projects/{GCP_PROJECT}/locations/{GCP_LOCATION}"
+            f"/keyRings/{GCP_KEYRING}/cryptoKeys/{GCP_KEY_NAME}"
+            f"/cryptoKeyVersions/{GCP_KEY_VERSION}"
+        )
     out = "/tmp/firmware-meta.json"
     with open(out, "w") as f:
         json.dump(record, f, indent=2)
@@ -398,10 +531,11 @@ def write_device_meta(meta: dict, download_url: str, tx_hash: str) -> None:
 
 def main():
     # Validate required env vars
-    missing = [v for v in ("SIGNER_KEY", "GITHUB_TOKEN", "CONTRACT_ADDR")
+    missing = [v for v in ("SIGNER_KEY", "GITHUB_TOKEN", "CONTRACT_ADDR",
+                           "GCP_PROJECT", "GCP_KEYRING", "GCP_KEY_NAME")
                if not os.environ.get(v)]
     if missing:
-        print(f"ERROR: set these environment variables before running:")
+        print("ERROR: set these environment variables before running:")
         for v in missing:
             print(f"  export {v}=...")
         sys.exit(1)
@@ -415,29 +549,35 @@ def main():
     run_bitbake_build()
     print()
 
-    # Step 4 — find image
+    # Step 2 — find image
     image_path, filename = find_image()
     print()
 
-    # Step 5 — compute metadata
+    # Step 3 — compute metadata
     meta = compute_metadata(image_path)
     print()
 
-    # Step 6 — GitHub release + upload
-    download_url = upload_to_github(image_path, filename, meta)
+    # Step 4 — HSM signing
+    sig_bytes, sig_path = sign_firmware_hsm(image_path, meta["sha256_bytes"])
+    signature_hex = sig_bytes.hex()
     print()
 
-    # Step 7 — blockchain registration
+    # Step 5 — GitHub release + upload (image + .sig)
+    download_url = upload_to_github(image_path, filename, meta, sig_path)
+    print()
+
+    # Step 6 — blockchain registration
     tx_hash = register_on_blockchain(meta, download_url)
     print()
 
     # Write on-device meta
-    write_device_meta(meta, download_url, tx_hash)
+    write_device_meta(meta, download_url, tx_hash, signature_hex)
 
     print()
     print("=" * 60)
     print("  Pipeline complete.")
     print(f"  firmware_id  : {meta['firmware_id']}")
+    print(f"  HSM sig      : {signature_hex[:32]}...")
     print(f"  GitHub URL   : {download_url}")
     print(f"  TX hash      : {tx_hash}")
     print("=" * 60)
