@@ -77,7 +77,7 @@ BOARD        = "raspberrypi3"
 # Config from environment
 # ─────────────────────────────────────────────────────────────────────────────
 
-RPC_URL       = os.environ.get("RPC_URL",       "http://127.0.0.1:8545")
+RPC_URL       = os.environ.get("RPC_URL",       "http://192.168.1.7:8545")
 CONTRACT_ADDR = os.environ.get("CONTRACT_ADDR", "0xYOUR_CONTRACT_ADDRESS")
 SIGNER_KEY    = os.environ.get("SIGNER_KEY",    "")
 GITHUB_TOKEN  = os.environ.get("GITHUB_TOKEN",  "")
@@ -98,7 +98,7 @@ VERSION       = os.environ.get("VERSION", _version_from_file)
 # Google Cloud KMS (HSM signing) config
 # ─────────────────────────────────────────────────────────────────────────────
 
-GCP_PROJECT     = os.environ.get("GCP_PROJECT",     "")
+GCP_PROJECT     = os.environ.get("GCP_PROJECT",     "project-9d4ab863-a976-47a2-9f2")
 GCP_LOCATION    = os.environ.get("GCP_LOCATION",    "global")
 GCP_KEYRING     = os.environ.get("GCP_KEYRING",     "firmware-signing")
 GCP_KEY_NAME    = os.environ.get("GCP_KEY_NAME",    "firmware-key")
@@ -199,10 +199,10 @@ def find_image() -> tuple[str, str]:
     print(f"[2/6] Locating firmware image in {DEPLOY_DIR} ...")
     candidates = [
         f for f in os.listdir(DEPLOY_DIR)
-        if f.endswith(".wic.bz2") and IMAGE_RECIPE in f
+        if f.endswith(".rootfs.wic.bz2") and IMAGE_RECIPE in f
     ]
     if not candidates:
-        raise RuntimeError(f"No .wic.bz2 image found in {DEPLOY_DIR}")
+        raise RuntimeError(f"No .rootfs.wic.bz2 image found in {DEPLOY_DIR}")
 
     # Pick the one with the latest mtime (in case there are symlinks + timestamped)
     candidates.sort(
@@ -211,6 +211,8 @@ def find_image() -> tuple[str, str]:
     )
     filename  = candidates[0]
     full_path = os.path.join(DEPLOY_DIR, filename)
+    #print full_path
+    print(f"      Found: {full_path}")
     print(f"      Found: {filename}")
     return full_path, filename
 
@@ -221,7 +223,8 @@ def find_image() -> tuple[str, str]:
 
 def compute_metadata(image_path: str) -> dict:
     """SHA-256 + file size + firmware_id + git commit."""
-    print("[3/6] Computing metadata...")
+    print("[3/6] Computing metadata...\n")
+    print(f"      Image path : {image_path}")
 
     sha256  = hashlib.sha256()
     size    = 0
@@ -231,16 +234,24 @@ def compute_metadata(image_path: str) -> dict:
             size += len(chunk)
 
     sha256_hex = sha256.hexdigest()
-    build_ts   = int(time.time())
+    # Use the image file's modification time as build_ts — this is the moment
+    # bitbake finished writing the image, which is the true build completion time.
+    # Using time.time() here would give the metadata-computation time, not the
+    # actual build time.
+    build_ts   = int(os.path.getmtime(image_path))
 
-    # git commit from the meta layer
+    # git commit from meta-userapp-package (where application development happens)
+    _META_LAYER = os.path.join(PROJECT_ROOT, "sources/meta-userapp-package")
     try:
         commit = subprocess.check_output(
-            ["git", "-C", PROJECT_ROOT, "rev-parse", "HEAD"],
+            ["git", "-C", _META_LAYER, "rev-parse", "HEAD"],
             stderr=subprocess.DEVNULL
         ).decode().strip()
     except Exception:
         commit = "unknown"
+
+    # print commit
+    print(f"      git_commit  : {commit[:12]}")
 
     # firmware_id = keccak256(version || build_ts || git_commit)
     firmware_id_bytes = keccak(f"{VERSION}{build_ts}{commit}".encode("utf-8"))
