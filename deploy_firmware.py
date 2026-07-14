@@ -66,7 +66,7 @@ from eth_hash.auto import keccak
 # Paths
 # ─────────────────────────────────────────────────────────────────────────────
 
-PROJECT_ROOT = "/home/pg3930/capstone1/raceiotprj"
+PROJECT_ROOT = "/home/ubuntu/raceiotprj"
 OE_INIT      = os.path.join(PROJECT_ROOT, "sources/poky/oe-init-build-env")
 DEPLOY_DIR   = os.path.join(PROJECT_ROOT,
                "build/tmp/deploy/images/raspberrypi3")
@@ -78,7 +78,7 @@ BOARD        = "raspberrypi3"
 # ─────────────────────────────────────────────────────────────────────────────
 
 RPC_URL       = os.environ.get("RPC_URL",       "http://192.168.1.7:8545")
-CONTRACT_ADDR = os.environ.get("CONTRACT_ADDR", "0xYOUR_CONTRACT_ADDRESS")
+CONTRACT_ADDR = os.environ.get("CONTRACT_ADDR", "0x5FbDB2315678afecb367f032d93F642f64180aa3")
 SIGNER_KEY    = os.environ.get("SIGNER_KEY",    "")
 GITHUB_TOKEN  = os.environ.get("GITHUB_TOKEN",  "")
 GITHUB_REPO   = "Pavan-githu/meta-userapp-package"

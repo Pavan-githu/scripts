@@ -1,0 +1,50 @@
+
+### Shell environment set up for builds. ###
+
+You can now run 'bitbake <target>'
+
+Common targets are:
+    core-image-minimal
+    core-image-full-cmdline
+    core-image-sato
+    core-image-weston
+    meta-toolchain
+    meta-ide-support
+
+You can also run generated qemu images with a command like 'runqemu qemux86'
+
+Other commonly useful commands are:
+ - 'devtool' and 'recipetool' handle common recipe tasks
+ - 'bitbake-layers' handles common layer tasks
+ - 'oe-pkgdata-util' handles common target package tasks
+Loading cache...done.
+Loaded 3906 entries from dependency cache.
+Parsing recipes...done.
+Parsing of 2503 .bb files complete (2502 cached, 1 parsed). 3907 targets, 131 skipped, 0 masked, 0 errors.
+NOTE: Resolving any missing task queue dependencies
+
+Build Configuration:
+BB_VERSION           = "2.0.0"
+BUILD_SYS            = "x86_64-linux"
+NATIVELSBSTRING      = "universal"
+TARGET_SYS           = "arm-poky-linux-gnueabi"
+MACHINE              = "raspberrypi3"
+DISTRO               = "poky"
+DISTRO_VERSION       = "4.0.35"
+TUNE_FEATURES        = "arm vfp cortexa7 neon vfpv4 thumb callconvention-hard"
+TARGET_FPU           = "hard"
+meta-poky            
+meta-yocto-bsp       = "kirkstone:4a5e618f5713600552c6c3edb1bfaa42c4506789"
+meta-raspberrypi     = "kirkstone:255500dd9f6a01a3445ac491d1abc401801e3bad"
+meta-oe              
+meta-python          
+meta-networking      
+meta-filesystems     
+meta-webserver       = "kirkstone:9d8ef26a9693e2c70ae34abe1a753873d42ec588"
+meta-userapp-package = "feature/firmwareUpdate:ba87ed196350f1b9a7e773dafe231eb5be7c3229"
+meta                 = "kirkstone:4a5e618f5713600552c6c3edb1bfaa42c4506789"
+
+Initialising tasks...done.
+Sstate summary: Wanted 0 Local 0 Mirrors 0 Missed 0 Current 1514 (0% match, 100% complete)
+NOTE: Executing Tasks
+NOTE: Tasks Summary: Attempted 3823 tasks of which 3823 didn't need to be rerun and all succeeded.
