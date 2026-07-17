@@ -235,6 +235,21 @@ echo ""
 separator
 log "[9/11] Resolving signer identity..."
 
+# If GCP_PROJECT is set, derive the signer identity from the full Google Cloud
+# KMS key resource path — this ties accountability directly to the HSM key that
+# will sign the firmware, making the identity cryptographically verifiable.
+# Format: projects/<proj>/locations/<loc>/keyRings/<ring>/cryptoKeys/<key>/cryptoKeyVersions/<ver>
+# Falls back to the SIGNER_IDENTITY env var when GCP is not configured.
+_GCP_PROJECT="${GCP_PROJECT:-}"
+_GCP_LOCATION="${GCP_LOCATION:-global}"
+_GCP_KEYRING="${GCP_KEYRING:-firmware-signing}"
+_GCP_KEY_NAME="${GCP_KEY_NAME:-firmware-key}"
+_GCP_KEY_VERSION="${GCP_KEY_VERSION:-1}"
+
+if [ -n "$_GCP_PROJECT" ]; then
+    SIGNER_IDENTITY="projects/${_GCP_PROJECT}/locations/${_GCP_LOCATION}/keyRings/${_GCP_KEYRING}/cryptoKeys/${_GCP_KEY_NAME}/cryptoKeyVersions/${_GCP_KEY_VERSION}"
+fi
+
 # git commit from meta-userapp-package for full traceability
 if git -C "$META_LAYER" rev-parse HEAD >/dev/null 2>&1; then
     GIT_COMMIT=$(git -C "$META_LAYER" rev-parse HEAD)
@@ -286,17 +301,12 @@ cat > "$METADATA_JSON" <<EOF
   "signer_identity":   "$SIGNER_IDENTITY",
   "download_url":      "$FIRMWARE_DOWNLOAD_URL",
   "image_filename":    "$IMAGE_FILENAME",
-  "image_size_bytes":  $IMAGE_SIZE_BYTES,
-  "git_commit":        "$GIT_COMMIT",
-  "board":             "$BOARD",
-  "image_recipe":      "$IMAGE_RECIPE",
-  "build_log":         "$BUILD_LOG"
+  "image_size_bytes":  $IMAGE_SIZE_BYTES
 }
 EOF
-# Note: hsm_signature / sig_file / pubkey_file / ldr_sha256 / hsm_key_id /
-#       hsm_algorithm are added by sign_firmware.py (KMS step) after the
-#       RPIF .ldr is built in step 12.
-# Note: firmware_id / tx_hash are added by deploy_firmware.py (blockchain step).
+# Note: final_image_filename / final_image_size_bytes are added by
+#       add_firmware_header.py in step 12.
+# Note: tx_hash is added by the blockchain registration step below.
 
 # Mirror to /tmp for downstream tools
 cp "$METADATA_JSON" "$TMP_META_JSON"
@@ -379,6 +389,282 @@ print(m.get('hsm_key_id',''))
         ok "[KMS] Sig hex : $HSM_SIG"
     else
         warn "[KMS] sign_firmware.py exited with errors — signature not written."
+    fi
+fi
+echo ""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [Optional] Append RPIS signature tail to .ldr
+#
+# Activated when KMS signing wrote hsm_signature into firmware-metadata.json.
+# Appends a 264-byte RPIS tail: "RPIS"(4) + sig_alg(2) + sig_len(2) + sig(256).
+# Produces a fully self-contained authenticated package:
+#   [ 84-byte RPIF header ][ .wic.bz2 payload ][ 264-byte RPIS tail ]
+# ─────────────────────────────────────────────────────────────────────────────
+separator
+METADATA_JSON_PATH="$METADATA_JSON" LDR_PATH_ENV="${LDR_PATH:-}" python3 - <<'PYEOF'
+import json, os, struct
+
+meta_path = os.environ["METADATA_JSON_PATH"]
+ldr_path  = os.environ.get("LDR_PATH_ENV", "")
+
+with open(meta_path) as f:
+    meta = json.load(f)
+
+hsm_sig_hex = meta.get("hsm_signature", "")
+
+if not hsm_sig_hex or not ldr_path or not os.path.exists(ldr_path):
+    print("  Skipping RPIS tail — no HSM signature or .ldr not found.")
+    raise SystemExit(0)
+
+sig_bytes = bytes.fromhex(hsm_sig_hex)
+sig_len   = len(sig_bytes)
+
+# Pad/truncate to exactly 256 bytes (RSA-2048 DER signature is always 256 bytes)
+sig_padded = (sig_bytes + b"\x00" * 256)[:256]
+
+# RPIS tail: "RPIS"(4) + sig_alg uint16 LE + sig_len uint16 LE + signature(256)
+RPIS_MAGIC           = b"RPIS"
+SIG_ALG_RSA_PSS_2048 = 1
+tail = RPIS_MAGIC + struct.pack("<HH", SIG_ALG_RSA_PSS_2048, sig_len) + sig_padded
+assert len(tail) == 264, f"RPIS tail must be 264 bytes, got {len(tail)}"
+
+with open(ldr_path, "ab") as f:
+    f.write(tail)
+
+final_size   = os.path.getsize(ldr_path)
+tail_offset  = final_size - 264
+
+meta["final_image_size_bytes"] = final_size
+meta["rpis_tail"] = {
+    "sig_alg":     "RSA_SIGN_PSS_2048_SHA256",
+    "sig_len":     sig_len,
+    "tail_offset": tail_offset,
+}
+with open(meta_path, "w") as f:
+    json.dump(meta, f, indent=2)
+
+print(f"  RPIS tail appended to : {ldr_path}")
+print(f"  sig_alg               : RSA_SIGN_PSS_2048_SHA256")
+print(f"  sig_len               : {sig_len} bytes")
+print(f"  tail_offset           : {tail_offset:,} (byte 84 + payload_size)")
+print(f"  Total .ldr size       : {final_size:,} bytes  (84 hdr + payload + 264 tail)")
+PYEOF
+
+if [ $? -eq 0 ]; then
+    ok "[RPIS] Signature tail appended — .ldr is now a self-contained authenticated package."
+else
+    warn "[RPIS] Tail append skipped or failed — no signature embedded in .ldr."
+fi
+echo ""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [Optional] Upload firmware to GitHub Releases — establishes the real download URL
+#
+# Must run BEFORE blockchain registration so writeFirmwareMetadata() receives
+# the actual verified URL, not a predicted placeholder.
+# Activated when GITHUB_TOKEN is present.
+# ─────────────────────────────────────────────────────────────────────────────
+separator
+if [ -z "${GITHUB_TOKEN:-}" ]; then
+    warn "Skipping GitHub upload (GITHUB_TOKEN not set)."
+    warn "  The download_url in metadata is a predicted value."
+    warn "  export GITHUB_TOKEN=<token>  to upload and lock in the real URL before"
+    warn "  blockchain registration."
+else
+    log "[GitHub] Uploading firmware to GitHub Releases..."
+    export GITHUB_TOKEN
+    GITHUB_REPO="${GITHUB_REPO:-Pavan-githu/meta-userapp-package}"
+
+    METADATA_JSON_PATH="$METADATA_JSON" \
+    GITHUB_REPO="$GITHUB_REPO" \
+    LDR_PATH_ENV="${LDR_PATH:-}" \
+    IMAGE_PATH_ENV="$IMAGE_PATH" \
+    VERSION_RAW_ENV="$VERSION_RAW" \
+    python3 - <<'PYEOF'
+import json, os, sys, requests
+
+meta_path   = os.environ["METADATA_JSON_PATH"]
+GITHUB_TOKEN= os.environ["GITHUB_TOKEN"]
+GITHUB_REPO = os.environ["GITHUB_REPO"]
+ldr_path    = os.environ.get("LDR_PATH_ENV", "")
+image_path  = os.environ["IMAGE_PATH_ENV"]
+version_raw = os.environ["VERSION_RAW_ENV"]
+
+with open(meta_path) as f:
+    meta = json.load(f)
+
+# Upload the signed .ldr if available, otherwise fall back to the raw image
+upload_path = ldr_path if ldr_path and os.path.exists(ldr_path) else image_path
+upload_name = os.path.basename(upload_path)
+
+GH_API = "https://api.github.com"
+headers = {
+    "Authorization": f"token {GITHUB_TOKEN}",
+    "Accept":        "application/vnd.github+json",
+}
+
+build_ts = int(__import__('os').path.getmtime(image_path))
+tag      = f"v{version_raw}-{build_ts}"
+rel_name = f"Firmware v{version_raw}"
+
+# Create the release
+r = requests.post(
+    f"{GH_API}/repos/{GITHUB_REPO}/releases",
+    headers=headers,
+    json={"tag_name": tag, "name": rel_name,
+          "body": f"firmware_hash: {meta['firmware_hash']}",
+          "draft": False, "prerelease": False},
+    timeout=30,
+)
+r.raise_for_status()
+release      = r.json()
+upload_url   = release["upload_url"].split("{")[0]
+print(f"  Release created : {release['html_url']}")
+
+# Upload the firmware file
+print(f"  Uploading       : {upload_name} ({os.path.getsize(upload_path):,} bytes)")
+with open(upload_path, "rb") as f:
+    r2 = requests.post(
+        upload_url,
+        headers={**headers, "Content-Type": "application/octet-stream"},
+        params={"name": upload_name},
+        data=f,
+        timeout=600,
+    )
+r2.raise_for_status()
+real_url = r2.json()["browser_download_url"]
+print(f"  Download URL    : {real_url}")
+
+# Update metadata with the verified URL
+meta["download_url"] = real_url
+with open(meta_path, "w") as f:
+    json.dump(meta, f, indent=2)
+PYEOF
+
+    if [ $? -eq 0 ]; then
+        FIRMWARE_DOWNLOAD_URL=$(python3 -c "
+import json
+with open('$METADATA_JSON') as f:
+    m = json.load(f)
+print(m.get('download_url', ''))
+")
+        ok "[GitHub] Firmware uploaded. Real download URL locked in metadata."
+        ok "[GitHub] URL : $FIRMWARE_DOWNLOAD_URL"
+    else
+        warn "[GitHub] Upload failed — download_url in metadata remains a predicted value."
+    fi
+fi
+echo ""
+
+# ─────────────────────────────────────────────────────────────────────────────
+# [Optional] Register firmware metadata on blockchain — FirmwareMetadataStore
+#
+# Runs AFTER the GitHub upload so the real download_url is used.
+# Activated when CONTRACT_ADDR and SIGNER_KEY are present.
+# Calls writeFirmwareMetadata() with the 9 metadata fields.
+# ─────────────────────────────────────────────────────────────────────────────
+separator
+if [ -z "${CONTRACT_ADDR:-}" ] || [ -z "${SIGNER_KEY:-}" ]; then
+    warn "Skipping blockchain metadata registration (FirmwareMetadataStore)."
+    warn "  export CONTRACT_ADDR=<0x...> SIGNER_KEY=<0x...> to enable."
+else
+    log "[Blockchain] Registering firmware metadata via writeFirmwareMetadata..."
+    export RPC_URL="${RPC_URL:-http://127.0.0.1:8545}"
+
+    METADATA_JSON_PATH="$METADATA_JSON" python3 - <<'PYEOF'
+import json, os, sys, requests
+from eth_account import Account
+from eth_hash.auto import keccak
+
+meta_path     = os.environ["METADATA_JSON_PATH"]
+RPC_URL       = os.environ.get("RPC_URL", "http://127.0.0.1:8545")
+CONTRACT_ADDR = os.environ["CONTRACT_ADDR"]
+SIGNER_KEY    = os.environ["SIGNER_KEY"]
+
+with open(meta_path) as f:
+    meta = json.load(f)
+
+def uint256_word(n):
+    return n.to_bytes(32, 'big')
+
+def encode_string(s):
+    data = s.encode('utf-8')
+    pad  = (32 - len(data) % 32) % 32
+    return uint256_word(len(data)) + data + b'\x00' * pad
+
+def build_calldata(m):
+    sig      = ("writeFirmwareMetadata("
+                "string,string,string,string,string,string,"
+                "uint256,string,uint256)")
+    selector = keccak(sig.encode())[:4]
+    # 7 string params (indices 0-5 and 7), 2 uint256 params (indices 6 and 8)
+    strs = [
+        m['firmware_hash'], m['firmware_version'], m['timestamp'],
+        m['signer_identity'], m['download_url'], m['image_filename'],
+        m['final_image_filename']
+    ]
+    encoded = [encode_string(s) for s in strs]
+    head   = bytearray()
+    tail   = bytearray()
+    offset = 9 * 32   # head section is 9 × 32 = 288 bytes
+    si     = 0
+    for i in range(9):
+        if i == 6:
+            head += uint256_word(m['image_size_bytes'])
+        elif i == 8:
+            head += uint256_word(m['final_image_size_bytes'])
+        else:
+            head += uint256_word(offset)
+            tail += encoded[si]
+            offset += len(encoded[si])
+            si += 1
+    return selector + bytes(head) + bytes(tail)
+
+def rpc(method, params):
+    r = requests.post(RPC_URL,
+        json={"jsonrpc":"2.0","method":method,"params":params,"id":1},
+        timeout=15)
+    r.raise_for_status()
+    res = r.json()
+    if 'error' in res:
+        raise RuntimeError(res['error'])
+    return res['result']
+
+calldata  = build_calldata(meta)
+acct      = Account.from_key(SIGNER_KEY)
+nonce     = int(rpc("eth_getTransactionCount", [acct.address, "latest"]), 16)
+gas_price = int(rpc("eth_gasPrice", []), 16)
+chain_id  = int(rpc("eth_chainId",  []), 16)
+
+tx = {
+    "to":       CONTRACT_ADDR,
+    "value":    0,
+    "gas":      400_000,
+    "gasPrice": gas_price,
+    "nonce":    nonce,
+    "data":     "0x" + calldata.hex(),
+    "chainId":  chain_id,
+}
+signed   = acct.sign_transaction(tx)
+tx_hash  = rpc("eth_sendRawTransaction", [signed.raw_transaction.hex()])
+print(f"  tx_hash : {tx_hash}")
+
+meta["tx_hash"] = tx_hash
+with open(meta_path, "w") as f:
+    json.dump(meta, f, indent=2)
+PYEOF
+
+    if [ $? -eq 0 ]; then
+        BC_TX=$(python3 -c "
+import json
+with open('$METADATA_JSON') as f:
+    m = json.load(f)
+print(m.get('tx_hash', 'n/a'))
+")
+        ok "[Blockchain] writeFirmwareMetadata registered : $BC_TX"
+    else
+        warn "[Blockchain] writeFirmwareMetadata failed — metadata not registered on-chain."
     fi
 fi
 echo ""
