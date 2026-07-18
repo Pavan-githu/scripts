@@ -421,8 +421,18 @@ with open(meta_path) as f:
 
 hsm_sig_hex = meta.get("hsm_signature", "")
 
-if not hsm_sig_hex or not ldr_path or not os.path.exists(ldr_path):
-    print("  Skipping RPIS tail — no HSM signature or .ldr not found.")
+# Diagnose exactly which condition is blocking the RPIS tail step
+if not hsm_sig_hex:
+    print("  Skipping RPIS tail — hsm_signature is missing from metadata.")
+    print("  Cause: KMS signing was skipped or failed (check [KMS] lines above).")
+    raise SystemExit(0)
+if not ldr_path:
+    print("  Skipping RPIS tail — LDR_PATH is empty.")
+    print("  Cause: add_firmware_header.py did not write final_image_path to metadata.")
+    raise SystemExit(0)
+if not os.path.exists(ldr_path):
+    print(f"  Skipping RPIS tail — .ldr file not found on disk: {ldr_path}")
+    print("  Cause: add_firmware_header.py may have written it to a different path.")
     raise SystemExit(0)
 
 sig_bytes = bytes.fromhex(hsm_sig_hex)
