@@ -466,7 +466,7 @@ fi
 echo ""
 
 # ─────────────────────────────────────────────────────────────────────────────
-# [Optional] Upload firmware to GitHub Releases — establishes the real download URL
+# [Optional] Upload .ldr firmware to GitHub Releases — establishes the real download URL
 #
 # Must run BEFORE blockchain registration so writeFirmwareMetadata() receives
 # the actual verified URL, not a predicted placeholder.
@@ -501,8 +501,14 @@ version_raw = os.environ["VERSION_RAW_ENV"]
 with open(meta_path) as f:
     meta = json.load(f)
 
-# Upload the signed .ldr if available, otherwise fall back to the raw image
-upload_path = ldr_path if ldr_path and os.path.exists(ldr_path) else image_path
+# Upload only the packaged .ldr artifact. Do not fall back to the raw .wic.bz2.
+if not ldr_path or not os.path.exists(ldr_path):
+    raise FileNotFoundError(
+        f".ldr firmware package not found: {ldr_path or '<empty>'}. "
+        "Run the header packer step successfully before GitHub upload."
+    )
+
+upload_path = ldr_path
 upload_name = os.path.basename(upload_path)
 
 GH_API = "https://api.github.com"
