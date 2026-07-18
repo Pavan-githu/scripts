@@ -2,33 +2,36 @@
 """
 Build_image/sign_firmware.py
 -----------------------------
-Signs the RPIF_<version>.ldr firmware package using Google Cloud KMS
+Signs the built .wic.bz2 firmware image using Google Cloud KMS
 (HSM-backed key).  The private key never leaves Google's hardware.
 
 What this script does:
-  [1] Loads Build_image/firmware-metadata.json to locate RPIF_*.ldr
-  [2] Computes SHA-256 of the entire .ldr file (header + payload)
+    [1] Loads scripts/Build_image/firmware-metadata.json
+    [2] Resolves the built image in build/tmp/deploy/images/raspberrypi3
+            (dynamic timestamp filename)
+    [3] Computes SHA-256 of the .rootfs.wic.bz2 image
   [3] Calls Cloud KMS  AsymmetricSign  with that digest
-  [4] Writes the DER signature to  RPIF_<version>.ldr.sig
+    [4] Writes the DER signature to:
+            core-image-minimal-raspberrypi3-<version>.ldr.sig
   [5] Fetches and saves the signer public key PEM  (for RPi-side verify)
   [6] Updates firmware-metadata.json with:
-        ldr_sha256     – SHA-256 of the .ldr file
+                wic_sha256     – SHA-256 of the .wic.bz2 file
         hsm_signature  – hex-encoded DER signature bytes
         hsm_key_id     – full KMS key-version resource name
         hsm_algorithm  – key algorithm reported by KMS
         sig_file       – absolute path to .sig file
         pubkey_file    – absolute path to public key PEM
 
-Raspberry Pi offline verification (OpenSSL, RSA-PSS 2048):
+Offline verification (OpenSSL, RSA-PSS 2048):
     openssl dgst -sha256 \\
         -sigopt rsa_padding_mode:pss \\
         -sigopt rsa_pss_saltlen:-1 \\
         -verify  <pubkey_file> \\
         -signature <sig_file> \\
-        RPIF_<version>.ldr
+        core-image-minimal-*.rootfs.wic.bz2
 
 Usage:
-    python3 Build_image/sign_firmware.py [PROJECT_DIR]
+    python3 scripts/Build_image/sign_firmware.py [PROJECT_DIR]
     PROJECT_DIR defaults to /home/ubuntu/raceiotprj
 
 Environment variables (all optional — have sensible defaults):
@@ -46,6 +49,7 @@ Environment variables (all optional — have sensible defaults):
 import sys
 import os
 import json
+import glob
 import hashlib
 import warnings
 
@@ -57,7 +61,7 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 # ─────────────────────────────────────────────────────────────────────────────
 PROJECT_DIR     = os.path.abspath(sys.argv[1] if len(sys.argv) > 1
                                   else "/home/ubuntu/raceiotprj")
-BUILD_IMAGE_DIR = os.path.join(PROJECT_DIR, "Build_image")
+BUILD_IMAGE_DIR = os.path.join(PROJECT_DIR, "scripts", "Build_image")
 METADATA_PATH   = os.path.join(BUILD_IMAGE_DIR, "firmware-metadata.json")
 DEFAULT_SA_JSON = os.path.join(PROJECT_DIR, "Google-HSM-Sign",
                                "firmware-signer-key.json")
@@ -101,30 +105,48 @@ def main():
     log("[1/6] Loading firmware-metadata.json...")
     if not os.path.exists(METADATA_PATH):
         err(f"firmware-metadata.json not found at {METADATA_PATH}\n"
-            "       Run Build_image/build_image.sh first.")
+            "       Run scripts/Build_image/build_image.sh first.")
 
     with open(METADATA_PATH) as f:
         meta = json.load(f)
 
-    ldr_path = meta.get("final_image_path", "")
-    if not ldr_path or not os.path.exists(ldr_path):
-        err(f"final_image_path not found in metadata or file missing: {ldr_path}\n"
-            "       Run Build_image/build_image.sh first (step 12 must complete).")
+    # ── [2] Resolve .wic.bz2 image path (dynamic timestamp filename) ─────────
+    log("[2/6] Resolving .wic.bz2 image path...")
+    image_path = ""
+    image_filename = meta.get("image_filename", "")
+
+    # Prefer the exact image file recorded by build_image.sh
+    if image_filename:
+        candidate = os.path.join(DEPLOY_DIR, image_filename)
+        if os.path.exists(candidate):
+            image_path = candidate
+
+    # Fallback: pick latest core-image-minimal-raspberrypi3-*.rootfs.wic.bz2
+    if not image_path:
+        pattern = os.path.join(DEPLOY_DIR,
+                               "core-image-minimal-raspberrypi3-*.rootfs.wic.bz2")
+        matches = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
+        if matches:
+            image_path = matches[0]
+
+    if not image_path:
+        err(f"No .rootfs.wic.bz2 image found in {DEPLOY_DIR}\n"
+            "       Run scripts/Build_image/build_image.sh first.")
 
     fw_version = meta.get("firmware_version", "unknown")
     ok(f"Firmware version : {fw_version}")
-    ok(f"LDR file         : {ldr_path}")
+    ok(f"WIC image        : {image_path}")
     print()
 
-    # ── [2] Compute SHA-256 of the .ldr file ─────────────────────────────────
-    log("[2/6] Computing SHA-256 of RPIF .ldr file...")
-    ldr_digest_raw = sha256_file(ldr_path)
-    ldr_sha256_hex = ldr_digest_raw.hex()
-    ok(f"SHA-256 : {ldr_sha256_hex}")
+    # ── [3] Compute SHA-256 of the .wic.bz2 file ─────────────────────────────
+    log("[3/6] Computing SHA-256 of .rootfs.wic.bz2...")
+    wic_digest_raw = sha256_file(image_path)
+    wic_sha256_hex = wic_digest_raw.hex()
+    ok(f"SHA-256 : {wic_sha256_hex}")
     print()
 
-    # ── [3] Resolve GCP credentials + KMS config ─────────────────────────────
-    log("[3/6] Resolving GCP credentials and KMS configuration...")
+    # ── [4] Resolve GCP credentials + KMS config ─────────────────────────────
+    log("[4/6] Resolving GCP credentials and KMS configuration...")
 
     sa_json_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", DEFAULT_SA_JSON)
     if not os.path.exists(sa_json_path):
@@ -140,7 +162,8 @@ def main():
     with open(sa_json_path) as f:
         sa_data = json.load(f)
 
-    gcp_project  = os.environ.get("GCP_PROJECT",     sa_data.get("project_id", ""))
+    default_project = "project-9d4ab863-a976-47a2-9f2"
+    gcp_project  = os.environ.get("GCP_PROJECT",     sa_data.get("project_id", default_project))
     gcp_location = os.environ.get("GCP_LOCATION",    "global")
     gcp_keyring  = os.environ.get("GCP_KEYRING",     "firmware-signing")
     gcp_key      = os.environ.get("GCP_KEY_NAME",    "firmware-key")
@@ -157,8 +180,8 @@ def main():
     ok(f"Key name     : {gcp_key}  (version {gcp_version})")
     print()
 
-    # ── [4] Call Cloud KMS AsymmetricSign ────────────────────────────────────
-    log("[4/6] Calling Google Cloud KMS AsymmetricSign...")
+    # ── [5] Call Cloud KMS AsymmetricSign ────────────────────────────────────
+    log("[5/6] Calling Google Cloud KMS AsymmetricSign...")
 
     try:
         from google.cloud import kms as gcp_kms
@@ -184,8 +207,8 @@ def main():
     ok(f"HSM key      : {key_version_name}")
     ok(f"Algorithm    : {algorithm}")
 
-    # Sign the SHA-256 digest of the .ldr file
-    digest_proto = gcp_kms.Digest(sha256=ldr_digest_raw)
+    # Sign the SHA-256 digest of the .wic.bz2 image
+    digest_proto = gcp_kms.Digest(sha256=wic_digest_raw)
     try:
         sign_response = client.asymmetric_sign(
             request={"name": key_version_name, "digest": digest_proto}
@@ -198,10 +221,12 @@ def main():
     ok(f"Signature    : {sig_hex[:48]}...  ({len(sig_bytes)} bytes DER)")
     print()
 
-    # ── [5] Write .sig file + public key PEM ─────────────────────────────────
-    log("[5/6] Writing signature and public key files...")
+    # ── [6] Write .sig file + public key PEM + metadata ─────────────────────
+    log("[6/6] Writing signature, public key, and metadata...")
 
-    sig_file    = ldr_path + ".sig"
+    version_for_name = fw_version[1:] if fw_version.startswith("v") else fw_version
+    sig_filename = f"core-image-minimal-raspberrypi3-{version_for_name}.ldr.sig"
+    sig_file    = os.path.join(BUILD_IMAGE_DIR, sig_filename)
     pubkey_file = os.path.join(BUILD_IMAGE_DIR, "fw-signer-pubkey.pem")
 
     with open(sig_file, "wb") as f:
@@ -213,10 +238,11 @@ def main():
     ok(f"Public key PEM : {pubkey_file}")
     print()
 
-    # ── [6] Update firmware-metadata.json ────────────────────────────────────
-    log("[6/6] Updating firmware-metadata.json...")
-
-    meta["ldr_sha256"]    = ldr_sha256_hex
+    meta["signed_image_path"] = image_path
+    meta["signed_image_filename"] = os.path.basename(image_path)
+    meta["wic_sha256"]    = wic_sha256_hex
+    # Keep legacy field for compatibility with any downstream consumers.
+    meta["ldr_sha256"]    = wic_sha256_hex
     meta["hsm_signature"] = sig_hex
     meta["hsm_key_id"]    = key_version_name
     meta["hsm_algorithm"] = algorithm
@@ -233,8 +259,8 @@ def main():
     print("=" * 62)
     print("  KMS Signing — COMPLETE")
     print("=" * 62)
-    print(f"  LDR file       : {ldr_path}")
-    print(f"  ldr_sha256     : {ldr_sha256_hex}")
+    print(f"  WIC image      : {image_path}")
+    print(f"  wic_sha256     : {wic_sha256_hex}")
     print(f"  hsm_key_id     : {key_version_name}")
     print(f"  hsm_algorithm  : {algorithm}")
     print(f"  hsm_signature  : {sig_hex[:48]}...")
@@ -247,7 +273,7 @@ def main():
     print(f"        -sigopt rsa_pss_saltlen:-1 \\")
     print(f"        -verify  {pubkey_file} \\")
     print(f"        -signature {sig_file} \\")
-    print(f"        {ldr_path}")
+    print(f"        {image_path}")
     print("=" * 62)
     print()
 
