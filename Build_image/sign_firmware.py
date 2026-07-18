@@ -67,6 +67,8 @@ BUILD_IMAGE_DIR = os.path.join(PROJECT_DIR, "scripts", "Build_image")
 METADATA_PATH   = os.path.join(BUILD_IMAGE_DIR, "firmware-metadata.json")
 DEFAULT_SA_JSON = os.path.join(PROJECT_DIR, "Google-HSM-Sign",
                                "firmware-signer-key.json")
+IMAGE_DEPLOY_DIR      = os.path.join(PROJECT_DIR, "build", "tmp", "deploy",
+                               "images", "raspberrypi3")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -119,20 +121,20 @@ def main():
 
     # Prefer the exact image file recorded by build_image.sh
     if image_filename:
-        candidate = os.path.join(DEPLOY_DIR, image_filename)
+        candidate = os.path.join(IMAGE_DEPLOY_DIR, image_filename)
         if os.path.exists(candidate):
             image_path = candidate
 
     # Fallback: pick latest core-image-minimal-raspberrypi3-*.rootfs.wic.bz2
     if not image_path:
-        pattern = os.path.join(DEPLOY_DIR,
+        pattern = os.path.join(IMAGE_DEPLOY_DIR,
                                "core-image-minimal-raspberrypi3-*.rootfs.wic.bz2")
         matches = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
         if matches:
             image_path = matches[0]
 
     if not image_path:
-        err(f"No .rootfs.wic.bz2 image found in {DEPLOY_DIR}\n"
+        err(f"No .rootfs.wic.bz2 image found in {IMAGE_DEPLOY_DIR}\n"
             "       Run scripts/Build_image/build_image.sh first.")
 
     fw_version = meta.get("firmware_version", "unknown")

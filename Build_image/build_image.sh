@@ -57,7 +57,7 @@ PROJECT_DIR="$(cd "$PROJECT_DIR" && pwd)"
 # Fixed paths derived from project root
 # ─────────────────────────────────────────────────────────────────────────────
 OE_INIT="$PROJECT_DIR/sources/poky/oe-init-build-env"
-DEPLOY_DIR="$PROJECT_DIR/build/tmp/deploy/images/raspberrypi3"
+IMAGE_DEPLOY_DIR="$PROJECT_DIR/build/tmp/deploy/images/raspberrypi3"
 VERSION_FILE="$PROJECT_DIR/sources/meta-userapp-package/recipes-apps/iot-gateway/VERSION"
 META_LAYER="$PROJECT_DIR/sources/meta-userapp-package"
 OUTPUT_DIR="$PROJECT_DIR/scripts/Build_image"
@@ -152,18 +152,18 @@ echo ""
 # [5] Locate the output image
 # ─────────────────────────────────────────────────────────────────────────────
 separator
-log "[5/11] Locating firmware image in $DEPLOY_DIR ..."
+log "[5/11] Locating firmware image in $IMAGE_DEPLOY_DIR ..."
 
 # Pick the most-recently modified .rootfs.wic.bz2 for this recipe
-IMAGE_PATH=$(ls -t "$DEPLOY_DIR/${IMAGE_RECIPE}-${BOARD}-"*.rootfs.wic.bz2 \
+IMAGE_PATH=$(ls -t "$IMAGE_DEPLOY_DIR/${IMAGE_RECIPE}-${BOARD}-"*.rootfs.wic.bz2 \
              2>/dev/null | head -n 1 || true)
 
 if [ -z "$IMAGE_PATH" ]; then
     # Fallback: any .wic.bz2 in the deploy directory
-    IMAGE_PATH=$(ls -t "$DEPLOY_DIR/"*.rootfs.wic.bz2 2>/dev/null | head -n 1 || true)
+    IMAGE_PATH=$(ls -t "$IMAGE_DEPLOY_DIR/"*.rootfs.wic.bz2 2>/dev/null | head -n 1 || true)
 fi
 
-[ -n "$IMAGE_PATH" ] || err "No .rootfs.wic.bz2 image found in $DEPLOY_DIR"
+[ -n "$IMAGE_PATH" ] || err "No .rootfs.wic.bz2 image found in $IMAGE_DEPLOY_DIR"
 
 IMAGE_FILENAME="$(basename "$IMAGE_PATH")"
 IMAGE_SIZE_BYTES=$(wc -c < "$IMAGE_PATH")
@@ -713,7 +713,7 @@ else
     echo ""
 
     # Pass metadata already computed so the Python script doesn't need to
-    # rebuild; it will still locate the image via DEPLOY_DIR.
+    # rebuild; it will still locate the image via IMAGE_DEPLOY_DIR.
     export VERSION="$VERSION_RAW"
     export GCP_LOCATION="${GCP_LOCATION:-global}"
     export GCP_KEY_VERSION="${GCP_KEY_VERSION:-1}"
