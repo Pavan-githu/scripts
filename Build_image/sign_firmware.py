@@ -152,11 +152,20 @@ def main():
     # ── [4] Resolve GCP credentials + KMS config ─────────────────────────────
     log("[4/6] Resolving GCP credentials and KMS configuration...")
 
-    sa_json_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", DEFAULT_SA_JSON)
+    _env_creds = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+    if _env_creds and os.path.exists(_env_creds):
+        # Explicit env var points to a real file — use it.
+        sa_json_path = _env_creds
+    else:
+        # Env var absent or points to a path that doesn't exist on this machine
+        # (common when sharing a repo between PCs with different home dirs).
+        # Fall back to the repo-relative default.
+        sa_json_path = DEFAULT_SA_JSON
+
     if not os.path.exists(sa_json_path):
         err(f"Service-account JSON not found: {sa_json_path}\n"
-            "       Set GOOGLE_APPLICATION_CREDENTIALS or place the file at:\n"
-            f"       {DEFAULT_SA_JSON}")
+            "       Place it at  <repo>/Google-HSM-Sign/firmware-signer-key.json\n"
+            "       or export GOOGLE_APPLICATION_CREDENTIALS=<path>")
 
     # Point the GCP SDK at the service-account file
     os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = sa_json_path
