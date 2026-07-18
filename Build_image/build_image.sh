@@ -68,6 +68,22 @@ IMAGE_RECIPE="core-image-minimal"
 BOARD="raspberrypi3"
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Load secrets from .env.secrets (never commit this file to version control)
+# Expected location: $PROJECT_DIR/scripts/Build_image/.env.secrets
+# ─────────────────────────────────────────────────────────────────────────────
+ENV_SECRETS="$OUTPUT_DIR/.env.secrets"
+if [ -f "$ENV_SECRETS" ]; then
+    # shellcheck disable=SC1090
+    set -a
+    source "$ENV_SECRETS"
+    set +a
+    log "Loaded secrets from $ENV_SECRETS"
+else
+    warn ".env.secrets not found at $ENV_SECRETS — blockchain/signing vars must be set in environment."
+    warn "  Create $ENV_SECRETS with: RPC_URL, CONTRACT_ADDR, SIGNER_KEY, GITHUB_TOKEN, GCP_PROJECT, etc."
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Signer identity (accountability field)
 # ─────────────────────────────────────────────────────────────────────────────
 SIGNER_IDENTITY="${SIGNER_IDENTITY:-TechID:5678}"
@@ -532,18 +548,45 @@ build_ts = int(__import__('os').path.getmtime(image_path))
 tag      = f"v{version_raw}-{build_ts}"
 rel_name = f"Firmware v{version_raw}"
 
-# Create the release
-r = requests.post(
-    f"{GH_API}/repos/{GITHUB_REPO}/releases",
-    headers=headers,
-    json={"tag_name": tag, "name": rel_name,
-          "body": f"firmware_hash: {meta['firmware_hash']}",
-          "draft": False, "prerelease": False},
-    timeout=30,
-)
-r.raise_for_status()
-release      = r.json()
-upload_url   = release["upload_url"].split("{")[0]
+# If a release for this tag already exists (HTTP 422), delete it first then retry.
+def create_release(tag, rel_name, body):
+    r = requests.post(
+        f"{GH_API}/repos/{GITHUB_REPO}/releases",
+        headers=headers,
+        json={"tag_name": tag, "name": rel_name, "body": body,
+              "draft": False, "prerelease": False},
+        timeout=30,
+    )
+    if r.status_code == 422:
+        # Tag already exists — find and delete the existing release, then retry.
+        existing = requests.get(
+            f"{GH_API}/repos/{GITHUB_REPO}/releases/tags/{tag}",
+            headers=headers, timeout=15,
+        )
+        if existing.status_code == 200:
+            rel_id = existing.json()["id"]
+            requests.delete(
+                f"{GH_API}/repos/{GITHUB_REPO}/releases/{rel_id}",
+                headers=headers, timeout=15,
+            ).raise_for_status()
+            print(f"  Deleted existing release for tag {tag!r}, retrying...")
+        # Also delete the git tag so GitHub lets us recreate it
+        requests.delete(
+            f"{GH_API}/repos/{GITHUB_REPO}/git/refs/tags/{tag}",
+            headers=headers, timeout=15,
+        )  # ignore errors — tag may not exist as a ref yet
+        r = requests.post(
+            f"{GH_API}/repos/{GITHUB_REPO}/releases",
+            headers=headers,
+            json={"tag_name": tag, "name": rel_name, "body": body,
+                  "draft": False, "prerelease": False},
+            timeout=30,
+        )
+    r.raise_for_status()
+    return r.json()
+
+release    = create_release(tag, rel_name, f"firmware_hash: {meta['firmware_hash']}")
+upload_url = release["upload_url"].split("{")[0]
 print(f"  Release created : {release['html_url']}")
 
 # Upload the firmware file
@@ -594,7 +637,8 @@ if [ -z "${CONTRACT_ADDR:-}" ] || [ -z "${SIGNER_KEY:-}" ]; then
     warn "  export CONTRACT_ADDR=<0x...> SIGNER_KEY=<0x...> to enable."
 else
     log "[Blockchain] Registering firmware metadata via writeFirmwareMetadata..."
-    export RPC_URL="${RPC_URL:-http://127.0.0.1:8545}"
+    [ -n "${RPC_URL:-}" ] || err "RPC_URL is not set. Add RPC_URL=http://<host>:8545 to $ENV_SECRETS"
+    export RPC_URL
 
     METADATA_JSON_PATH="$METADATA_JSON" python3 - <<'PYEOF'
 import json, os, sys, requests
@@ -602,7 +646,7 @@ from eth_account import Account
 from eth_hash.auto import keccak
 
 meta_path     = os.environ["METADATA_JSON_PATH"]
-RPC_URL       = os.environ.get("RPC_URL", "http://127.0.0.1:8545")
+RPC_URL       = os.environ["RPC_URL"]
 CONTRACT_ADDR = os.environ["CONTRACT_ADDR"]
 SIGNER_KEY    = os.environ["SIGNER_KEY"]
 
@@ -692,100 +736,6 @@ print(m.get('tx_hash', 'n/a'))
     fi
 fi
 echo ""
-
-# ─────────────────────────────────────────────────────────────────────────────
-# [Optional] Full pipeline — GitHub upload + blockchain registration
-#
-# Activated when ALL of the following are present:
-#   GCP_PROJECT, GCP_KEYRING, GCP_KEY_NAME, GITHUB_TOKEN,
-#   CONTRACT_ADDR, SIGNER_KEY
-# ─────────────────────────────────────────────────────────────────────────────
-REQUIRED_FOR_PIPELINE="GCP_PROJECT GCP_KEYRING GCP_KEY_NAME GITHUB_TOKEN CONTRACT_ADDR SIGNER_KEY"
-MISSING_VARS=""
-for VAR in $REQUIRED_FOR_PIPELINE; do
-    [ -n "${!VAR:-}" ] || MISSING_VARS="${MISSING_VARS} ${VAR}"
-done
-
-separator
-if [ -n "$MISSING_VARS" ]; then
-    warn "Skipping GitHub upload / blockchain registration."
-    warn "Set the following environment variables to enable the full pipeline:"
-    for V in $MISSING_VARS; do
-        warn "  export $V=..."
-    done
-    echo ""
-    warn "You can run the full pipeline manually afterwards:"
-    warn "  export GCP_PROJECT=... GCP_KEYRING=... GCP_KEY_NAME=..."
-    warn "  export GITHUB_TOKEN=... CONTRACT_ADDR=... SIGNER_KEY=..."
-    warn "  python3 $DEPLOY_SCRIPT"
-else
-    log "All pipeline env vars present — invoking deploy_firmware.py ..."
-    echo ""
-
-    # Pass metadata already computed so the Python script doesn't need to
-    # rebuild; it will still locate the image via IMAGE_DEPLOY_DIR.
-    export VERSION="$VERSION_RAW"
-    export GCP_LOCATION="${GCP_LOCATION:-global}"
-    export GCP_KEY_VERSION="${GCP_KEY_VERSION:-1}"
-    export RPC_URL="${RPC_URL:-http://127.0.0.1:8545}"
-
-    if python3 "$DEPLOY_SCRIPT"; then
-        ok "deploy_firmware.py completed."
-        # Merge firmware_id, hsm_signature, tx_hash back into our JSON
-        if [ -f "$TMP_META_JSON" ]; then
-            python3 - <<'PYEOF'
-import json, sys
-
-meta_path   = "/tmp/firmware-meta.json"
-output_path = None  # filled below
-
-import os
-output_path = os.environ.get("METADATA_JSON_PATH")
-
-with open(meta_path) as f:
-    deployed = json.load(f)
-
-with open(output_path) as f:
-    local = json.load(f)
-
-# Merge deployed fields into the local metadata
-for key in ("firmware_id", "hsm_signature", "hsm_key", "tx_hash", "download_url"):
-    if deployed.get(key):
-        local[key] = deployed[key]
-
-with open(output_path, "w") as f:
-    json.dump(local, f, indent=2)
-
-print(f"  firmware_id  : {local.get('firmware_id', 'n/a')}")
-print(f"  hsm_signature: {str(local.get('hsm_signature', ''))[:32]}...")
-print(f"  download_url : {local.get('download_url', 'n/a')}")
-print(f"  tx_hash      : {local.get('tx_hash', 'n/a')}")
-PYEOF
-            METADATA_JSON_PATH="$METADATA_JSON" python3 - <<'PYEOF2'
-import json, os
-
-meta_path   = "/tmp/firmware-meta.json"
-output_path = os.environ["METADATA_JSON_PATH"]
-
-with open(meta_path) as f:
-    deployed = json.load(f)
-
-with open(output_path) as f:
-    local = json.load(f)
-
-for key in ("firmware_id", "hsm_signature", "hsm_key", "tx_hash", "download_url"):
-    if deployed.get(key):
-        local[key] = deployed[key]
-
-with open(output_path, "w") as f:
-    json.dump(local, f, indent=2)
-PYEOF2
-            ok "Metadata merged with HSM + blockchain fields: $METADATA_JSON"
-        fi
-    else
-        warn "deploy_firmware.py exited with errors — partial metadata in $METADATA_JSON"
-    fi
-fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Summary
