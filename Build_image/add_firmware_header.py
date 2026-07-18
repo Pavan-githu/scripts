@@ -210,13 +210,14 @@ def verify_header(data: bytes) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def main():
-    project_dir = sys.argv[1] if len(sys.argv) > 1 else "/home/ubuntu/raceiotprj"
-    project_dir = os.path.abspath(project_dir)
+    _script_dir = os.path.dirname(os.path.abspath(__file__))
+    _default_project_dir = os.path.abspath(os.path.join(_script_dir, "..", ".."))
+    project_dir = os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else _default_project_dir)
 
-    build_image_dir = os.path.join(project_dir, "Build_image")
+    build_image_dir = os.path.join(project_dir, "scripts", "Build_image")
     metadata_path   = os.path.join(build_image_dir, "firmware-metadata.json")
     deploy_dir      = os.path.join(project_dir,
-                                   "build/tmp/deploy/images/raspberrypi3")
+                                   "build", "tmp", "deploy", "images", "raspberrypi3")
 
     # ── Load metadata ─────────────────────────────────────────────────────────
     if not os.path.exists(metadata_path):
