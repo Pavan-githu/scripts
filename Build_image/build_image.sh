@@ -59,7 +59,7 @@ OE_INIT="$PROJECT_DIR/sources/poky/oe-init-build-env"
 DEPLOY_DIR="$PROJECT_DIR/build/tmp/deploy/images/raspberrypi3"
 VERSION_FILE="$PROJECT_DIR/sources/meta-userapp-package/recipes-apps/iot-gateway/VERSION"
 META_LAYER="$PROJECT_DIR/sources/meta-userapp-package"
-OUTPUT_DIR="$PROJECT_DIR/Build_image"
+OUTPUT_DIR="$PROJECT_DIR/scripts/Build_image"
 METADATA_JSON="$OUTPUT_DIR/firmware-metadata.json"
 TMP_META_JSON="/tmp/firmware-meta.json"
 DEPLOY_SCRIPT="$PROJECT_DIR/scripts/deploy_firmware.py"
@@ -240,7 +240,7 @@ log "[9/11] Resolving signer identity..."
 # will sign the firmware, making the identity cryptographically verifiable.
 # Format: projects/<proj>/locations/<loc>/keyRings/<ring>/cryptoKeys/<key>/cryptoKeyVersions/<ver>
 # Falls back to the SIGNER_IDENTITY env var when GCP is not configured.
-_GCP_PROJECT="${GCP_PROJECT:-}"
+_GCP_PROJECT="${GCP_PROJECT:-project-9d4ab863-a976-47a2-9f2}"
 _GCP_LOCATION="${GCP_LOCATION:-global}"
 _GCP_KEYRING="${GCP_KEYRING:-firmware-signing}"
 _GCP_KEY_NAME="${GCP_KEY_NAME:-firmware-key}"
@@ -249,6 +249,13 @@ _GCP_KEY_VERSION="${GCP_KEY_VERSION:-1}"
 if [ -n "$_GCP_PROJECT" ]; then
     SIGNER_IDENTITY="projects/${_GCP_PROJECT}/locations/${_GCP_LOCATION}/keyRings/${_GCP_KEYRING}/cryptoKeys/${_GCP_KEY_NAME}/cryptoKeyVersions/${_GCP_KEY_VERSION}"
 fi
+
+# Export resolved KMS settings so downstream scripts use the same values.
+export GCP_PROJECT="$_GCP_PROJECT"
+export GCP_LOCATION="$_GCP_LOCATION"
+export GCP_KEYRING="$_GCP_KEYRING"
+export GCP_KEY_NAME="$_GCP_KEY_NAME"
+export GCP_KEY_VERSION="$_GCP_KEY_VERSION"
 
 # git commit from meta-userapp-package for full traceability
 if git -C "$META_LAYER" rev-parse HEAD >/dev/null 2>&1; then
@@ -268,7 +275,7 @@ echo ""
 # ─────────────────────────────────────────────────────────────────────────────
 separator
 log "[10/11] Resolving firmware download URL..."
-
+export DOWNLOAD_URL="https://github.com/Pavan-githu/meta-userapp-package/releases"
 if [ -n "${DOWNLOAD_URL:-}" ]; then
     FIRMWARE_DOWNLOAD_URL="$DOWNLOAD_URL"
     ok "Download URL (provided via env) : $FIRMWARE_DOWNLOAD_URL"
