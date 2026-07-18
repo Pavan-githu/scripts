@@ -42,7 +42,8 @@ set -euo pipefail
 # ─────────────────────────────────────────────────────────────────────────────
 # Resolve project root from $1 or default
 # ─────────────────────────────────────────────────────────────────────────────
-PROJECT_DIR="${1:-/home/ubuntu/raceiotprj}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="${1:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 
 if [ ! -d "$PROJECT_DIR" ]; then
     echo "ERROR: PROJECT_DIR does not exist: $PROJECT_DIR"

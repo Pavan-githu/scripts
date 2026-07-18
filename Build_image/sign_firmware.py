@@ -32,7 +32,7 @@ Offline verification (OpenSSL, RSA-PSS 2048):
 
 Usage:
     python3 scripts/Build_image/sign_firmware.py [PROJECT_DIR]
-    PROJECT_DIR defaults to /home/ubuntu/raceiotprj
+    PROJECT_DIR defaults to the repository root inferred from this script
 
 Environment variables (all optional — have sensible defaults):
     GOOGLE_APPLICATION_CREDENTIALS
@@ -59,8 +59,10 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 # ─────────────────────────────────────────────────────────────────────────────
 # Resolve project root
 # ─────────────────────────────────────────────────────────────────────────────
+SCRIPT_DIR      = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_PROJECT_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, "..", ".."))
 PROJECT_DIR     = os.path.abspath(sys.argv[1] if len(sys.argv) > 1
-                                  else "/home/ubuntu/raceiotprj")
+                                  else DEFAULT_PROJECT_DIR)
 BUILD_IMAGE_DIR = os.path.join(PROJECT_DIR, "scripts", "Build_image")
 METADATA_PATH   = os.path.join(BUILD_IMAGE_DIR, "firmware-metadata.json")
 DEFAULT_SA_JSON = os.path.join(PROJECT_DIR, "Google-HSM-Sign",
