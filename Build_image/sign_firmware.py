@@ -2,20 +2,20 @@
 """
 Build_image/sign_firmware.py
 -----------------------------
-Signs the built .wic.bz2 firmware image using Google Cloud KMS
+Signs the built .raucb firmware bundle using Google Cloud KMS
 (HSM-backed key).  The private key never leaves Google's hardware.
 
 What this script does:
     [1] Loads scripts/Build_image/firmware-metadata.json
     [2] Resolves the built image in build/tmp/deploy/images/raspberrypi3
-            (dynamic timestamp filename)
-    [3] Computes SHA-256 of the .rootfs.wic.bz2 image
+            (iot-gateway-bundle-raspberrypi3*.raucb)
+    [3] Computes SHA-256 of the .raucb bundle
   [3] Calls Cloud KMS  AsymmetricSign  with that digest
     [4] Writes the DER signature to:
-            core-image-minimal-raspberrypi3-<version>.ldr.sig
+            iot-gateway-bundle-raspberrypi3-<version>.ldr.sig
   [5] Fetches and saves the signer public key PEM  (for RPi-side verify)
   [6] Updates firmware-metadata.json with:
-                wic_sha256     – SHA-256 of the .wic.bz2 file
+                raucb_sha256   – SHA-256 of the .raucb bundle
         hsm_signature  – hex-encoded DER signature bytes
         hsm_key_id     – full KMS key-version resource name
         hsm_algorithm  – key algorithm reported by KMS
@@ -28,7 +28,7 @@ Offline verification (OpenSSL, RSA-PSS 2048):
         -sigopt rsa_pss_saltlen:-1 \\
         -verify  <pubkey_file> \\
         -signature <sig_file> \\
-        core-image-minimal-*.rootfs.wic.bz2
+        iot-gateway-bundle-raspberrypi3*.raucb
 
 Usage:
     python3 scripts/Build_image/sign_firmware.py [PROJECT_DIR]
@@ -114,8 +114,8 @@ def main():
     with open(METADATA_PATH) as f:
         meta = json.load(f)
 
-    # ── [2] Resolve .wic.bz2 image path (dynamic timestamp filename) ─────────
-    log("[2/6] Resolving .wic.bz2 image path...")
+    # ── [2] Resolve .raucb image path ─────────────────────────────────────────────────────
+    log("[2/6] Resolving .raucb image path...")
     image_path = ""
     image_filename = meta.get("image_filename", "")
 
@@ -125,28 +125,28 @@ def main():
         if os.path.exists(candidate):
             image_path = candidate
 
-    # Fallback: pick latest core-image-minimal-raspberrypi3-*.rootfs.wic.bz2
+    # Fallback: pick latest iot-gateway-bundle-raspberrypi3*.raucb
     if not image_path:
         pattern = os.path.join(IMAGE_DEPLOY_DIR,
-                               "core-image-minimal-raspberrypi3-*.rootfs.wic.bz2")
+                               "iot-gateway-bundle-raspberrypi3*.raucb")
         matches = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
         if matches:
             image_path = matches[0]
 
     if not image_path:
-        err(f"No .rootfs.wic.bz2 image found in {IMAGE_DEPLOY_DIR}\n"
+        err(f"No .raucb image found in {IMAGE_DEPLOY_DIR}\n"
             "       Run scripts/Build_image/build_image.sh first.")
 
     fw_version = meta.get("firmware_version", "unknown")
     ok(f"Firmware version : {fw_version}")
-    ok(f"WIC image        : {image_path}")
+    ok(f"RAUCB image      : {image_path}")
     print()
 
-    # ── [3] Compute SHA-256 of the .wic.bz2 file ─────────────────────────────
-    log("[3/6] Computing SHA-256 of .rootfs.wic.bz2...")
-    wic_digest_raw = sha256_file(image_path)
-    wic_sha256_hex = wic_digest_raw.hex()
-    ok(f"SHA-256 : {wic_sha256_hex}")
+    # ── [3] Compute SHA-256 of the .raucb file ──────────────────────────────────
+    log("[3/6] Computing SHA-256 of .raucb...")
+    raucb_digest_raw = sha256_file(image_path)
+    raucb_sha256_hex = raucb_digest_raw.hex()
+    ok(f"SHA-256 : {raucb_sha256_hex}")
     print()
 
     # ── [4] Resolve GCP credentials + KMS config ─────────────────────────────
@@ -220,8 +220,8 @@ def main():
     ok(f"HSM key      : {key_version_name}")
     ok(f"Algorithm    : {algorithm}")
 
-    # Sign the SHA-256 digest of the .wic.bz2 image
-    digest_proto = gcp_kms.Digest(sha256=wic_digest_raw)
+    # Sign the SHA-256 digest of the .raucb bundle
+    digest_proto = gcp_kms.Digest(sha256=raucb_digest_raw)
     try:
         sign_response = client.asymmetric_sign(
             request={"name": key_version_name, "digest": digest_proto}
@@ -238,7 +238,7 @@ def main():
     log("[6/6] Writing signature, public key, and metadata...")
 
     version_for_name = fw_version[1:] if fw_version.startswith("v") else fw_version
-    sig_filename = f"core-image-minimal-raspberrypi3-{version_for_name}.ldr.sig"
+    sig_filename = f"iot-gateway-bundle-raspberrypi3-{version_for_name}.ldr.sig"
     sig_file    = os.path.join(BUILD_IMAGE_DIR, sig_filename)
     pubkey_file = os.path.join(BUILD_IMAGE_DIR, "fw-signer-pubkey.pem")
 
@@ -251,11 +251,9 @@ def main():
     ok(f"Public key PEM : {pubkey_file}")
     print()
 
-    meta["signed_image_path"] = image_path
+    meta["signed_image_path"]     = image_path
     meta["signed_image_filename"] = os.path.basename(image_path)
-    meta["wic_sha256"]    = wic_sha256_hex
-    # Keep legacy field for compatibility with any downstream consumers.
-    meta["ldr_sha256"]    = wic_sha256_hex
+    meta["raucb_sha256"]  = raucb_sha256_hex
     meta["hsm_signature"] = sig_hex
     meta["hsm_key_id"]    = key_version_name
     meta["hsm_algorithm"] = algorithm
@@ -272,8 +270,8 @@ def main():
     print("=" * 62)
     print("  KMS Signing — COMPLETE")
     print("=" * 62)
-    print(f"  WIC image      : {image_path}")
-    print(f"  wic_sha256     : {wic_sha256_hex}")
+    print(f"  RAUCB image    : {image_path}")
+    print(f"  raucb_sha256   : {raucb_sha256_hex}")
     print(f"  hsm_key_id     : {key_version_name}")
     print(f"  hsm_algorithm  : {algorithm}")
     print(f"  hsm_signature  : {sig_hex[:48]}...")
@@ -286,7 +284,7 @@ def main():
     print(f"        -sigopt rsa_pss_saltlen:-1 \\")
     print(f"        -verify  {pubkey_file} \\")
     print(f"        -signature {sig_file} \\")
-    print(f"        {image_path}")
+    print(f"        {image_path}  # .raucb bundle")
     print("=" * 62)
     print()
 

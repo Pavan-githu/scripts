@@ -11,9 +11,9 @@
 #
 # What this script does:
 #   [1] Sources the Yocto OpenEmbedded build environment
-#   [2] Runs  bitbake core-image-minimal
+#   [2] Runs  bitbake iot-gateway-bundle
 #   [3] Verifies the build succeeded (Tasks Summary check)
-#   [4] Locates the output .rootfs.wic.bz2 image
+#   [4] Locates the output .raucb bundle
 #   [5] Computes SHA-256 of the image  (firmware_hash – integrity)
 #   [6] Reads firmware version from sources/meta-userapp-package/…/VERSION
 #   [7] Records ISO-8601 build timestamp           (audit trail)
@@ -38,6 +38,17 @@
 # =============================================================================
 
 set -euo pipefail
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Load repo-root .env.secrets (two levels up from this script)
+# ─────────────────────────────────────────────────────────────────────────────
+_ROOT_SECRETS="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/.env.secrets"
+if [ -f "$_ROOT_SECRETS" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$_ROOT_SECRETS"
+    set +a
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Resolve project root from $1 or default
@@ -68,6 +79,16 @@ IMAGE_RECIPE="iot-gateway-bundle"
 BOARD="raspberrypi3"
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Helper utilities
+# ─────────────────────────────────────────────────────────────────────────────
+log()  { echo "[$(date '+%H:%M:%S')] $*"; }
+ok()   { echo "[$(date '+%H:%M:%S')] ✔  $*"; }
+warn() { echo "[$(date '+%H:%M:%S')] ⚠  $*" >&2; }
+err()  { echo "[$(date '+%H:%M:%S')] ✘  $*" >&2; exit 1; }
+
+separator() { echo "──────────────────────────────────────────────────────────────"; }
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Load secrets from .env.secrets (never commit this file to version control)
 # Expected location: $PROJECT_DIR/scripts/Build_image/.env.secrets
 # ─────────────────────────────────────────────────────────────────────────────
@@ -87,16 +108,6 @@ fi
 # Signer identity (accountability field)
 # ─────────────────────────────────────────────────────────────────────────────
 SIGNER_IDENTITY="${SIGNER_IDENTITY:-TechID:5678}"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Helper utilities
-# ─────────────────────────────────────────────────────────────────────────────
-log()  { echo "[$(date '+%H:%M:%S')] $*"; }
-ok()   { echo "[$(date '+%H:%M:%S')] ✔  $*"; }
-warn() { echo "[$(date '+%H:%M:%S')] ⚠  $*" >&2; }
-err()  { echo "[$(date '+%H:%M:%S')] ✘  $*" >&2; exit 1; }
-
-separator() { echo "──────────────────────────────────────────────────────────────"; }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Banner
@@ -313,27 +324,11 @@ echo ""
 separator
 log "[11/12] Writing firmware metadata..."
 
-# firmware_id = keccak256(version || build_ts || git_commit) computed in Python
-# For the shell-only metadata file we record the raw inputs and leave
-# firmware_id to be filled by deploy_firmware.py if invoked below.
+export FIRMWARE_HASH FIRMWARE_VERSION TIMESTAMP SIGNER_IDENTITY \
+       FIRMWARE_DOWNLOAD_URL IMAGE_FILENAME IMAGE_SIZE_BYTES \
+       METADATA_JSON TMP_META_JSON
 
-cat > "$METADATA_JSON" <<EOF
-{
-  "firmware_hash":     "$FIRMWARE_HASH",
-  "firmware_version":  "$FIRMWARE_VERSION",
-  "timestamp":         "$TIMESTAMP",
-  "signer_identity":   "$SIGNER_IDENTITY",
-  "download_url":      "$FIRMWARE_DOWNLOAD_URL",
-  "image_filename":    "$IMAGE_FILENAME",
-  "image_size_bytes":  $IMAGE_SIZE_BYTES
-}
-EOF
-# Note: final_image_filename / final_image_size_bytes are added by
-#       add_firmware_header.py in step 12.
-# Note: tx_hash is added by the blockchain registration step below.
-
-# Mirror to /tmp for downstream tools
-cp "$METADATA_JSON" "$TMP_META_JSON"
+bash "$OUTPUT_DIR/write_firmware_metadata.sh"
 
 ok "Metadata written : $METADATA_JSON"
 ok "Metadata copy    : $TMP_META_JSON"
@@ -423,7 +418,7 @@ echo ""
 # Activated when KMS signing wrote hsm_signature into firmware-metadata.json.
 # Appends a 264-byte RPIS tail: "RPIS"(4) + sig_alg(2) + sig_len(2) + sig(256).
 # Produces a fully self-contained authenticated package:
-#   [ 84-byte RPIF header ][ .wic.bz2 payload ][ 264-byte RPIS tail ]
+#   [ 84-byte RPIF header ][ .raucb payload ][ 264-byte RPIS tail ]
 # ─────────────────────────────────────────────────────────────────────────────
 separator
 METADATA_JSON_PATH="$METADATA_JSON" LDR_PATH_ENV="${LDR_PATH:-}" python3 - <<'PYEOF'
@@ -508,108 +503,9 @@ if [ -z "${GITHUB_TOKEN:-}" ]; then
 else
     log "[GitHub] Uploading firmware to GitHub Releases..."
     export GITHUB_TOKEN
-    GITHUB_REPO="${GITHUB_REPO:-Pavan-githu/meta-userapp-package}"
+    export GITHUB_REPO="${GITHUB_REPO:-Pavan-githu/meta-userapp-package}"
 
-    METADATA_JSON_PATH="$METADATA_JSON" \
-    GITHUB_REPO="$GITHUB_REPO" \
-    LDR_PATH_ENV="${LDR_PATH:-}" \
-    IMAGE_PATH_ENV="$IMAGE_PATH" \
-    VERSION_RAW_ENV="$VERSION_RAW" \
-    python3 - <<'PYEOF'
-import json, os, sys, requests
-
-meta_path   = os.environ["METADATA_JSON_PATH"]
-GITHUB_TOKEN= os.environ["GITHUB_TOKEN"]
-GITHUB_REPO = os.environ["GITHUB_REPO"]
-ldr_path    = os.environ.get("LDR_PATH_ENV", "")
-image_path  = os.environ["IMAGE_PATH_ENV"]
-version_raw = os.environ["VERSION_RAW_ENV"]
-
-with open(meta_path) as f:
-    meta = json.load(f)
-
-# Upload only the packaged .ldr artifact. Do not fall back to the raw .wic.bz2.
-if not ldr_path or not os.path.exists(ldr_path):
-    raise FileNotFoundError(
-        f".ldr firmware package not found: {ldr_path or '<empty>'}. "
-        "Run the header packer step successfully before GitHub upload."
-    )
-
-upload_path = ldr_path
-upload_name = os.path.basename(upload_path)
-
-GH_API = "https://api.github.com"
-headers = {
-    "Authorization": f"token {GITHUB_TOKEN}",
-    "Accept":        "application/vnd.github+json",
-}
-
-build_ts = int(__import__('os').path.getmtime(image_path))
-tag      = f"v{version_raw}-{build_ts}"
-rel_name = f"Firmware v{version_raw}"
-
-# If a release for this tag already exists (HTTP 422), delete it first then retry.
-def create_release(tag, rel_name, body):
-    r = requests.post(
-        f"{GH_API}/repos/{GITHUB_REPO}/releases",
-        headers=headers,
-        json={"tag_name": tag, "name": rel_name, "body": body,
-              "draft": False, "prerelease": False},
-        timeout=30,
-    )
-    if r.status_code == 422:
-        # Tag already exists — find and delete the existing release, then retry.
-        existing = requests.get(
-            f"{GH_API}/repos/{GITHUB_REPO}/releases/tags/{tag}",
-            headers=headers, timeout=15,
-        )
-        if existing.status_code == 200:
-            rel_id = existing.json()["id"]
-            requests.delete(
-                f"{GH_API}/repos/{GITHUB_REPO}/releases/{rel_id}",
-                headers=headers, timeout=15,
-            ).raise_for_status()
-            print(f"  Deleted existing release for tag {tag!r}, retrying...")
-        # Also delete the git tag so GitHub lets us recreate it
-        requests.delete(
-            f"{GH_API}/repos/{GITHUB_REPO}/git/refs/tags/{tag}",
-            headers=headers, timeout=15,
-        )  # ignore errors — tag may not exist as a ref yet
-        r = requests.post(
-            f"{GH_API}/repos/{GITHUB_REPO}/releases",
-            headers=headers,
-            json={"tag_name": tag, "name": rel_name, "body": body,
-                  "draft": False, "prerelease": False},
-            timeout=30,
-        )
-    r.raise_for_status()
-    return r.json()
-
-release    = create_release(tag, rel_name, f"firmware_hash: {meta['firmware_hash']}")
-upload_url = release["upload_url"].split("{")[0]
-print(f"  Release created : {release['html_url']}")
-
-# Upload the firmware file
-print(f"  Uploading       : {upload_name} ({os.path.getsize(upload_path):,} bytes)")
-with open(upload_path, "rb") as f:
-    r2 = requests.post(
-        upload_url,
-        headers={**headers, "Content-Type": "application/octet-stream"},
-        params={"name": upload_name},
-        data=f,
-        timeout=600,
-    )
-r2.raise_for_status()
-real_url = r2.json()["browser_download_url"]
-print(f"  Download URL    : {real_url}")
-
-# Update metadata with the verified URL
-meta["download_url"] = real_url
-with open(meta_path, "w") as f:
-    json.dump(meta, f, indent=2)
-PYEOF
-
-    if [ $? -eq 0 ]; then
+    if python3 "$OUTPUT_DIR/upload_to_github.py" "$PROJECT_DIR"; then
         FIRMWARE_DOWNLOAD_URL=$(python3 -c "
 import json
 with open('$METADATA_JSON') as f:

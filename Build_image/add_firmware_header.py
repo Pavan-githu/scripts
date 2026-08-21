@@ -2,10 +2,10 @@
 """
 Build_image/add_firmware_header.py
 -----------------------------------
-Prepends a compact binary header to the Yocto .wic.bz2 image, producing a
+Prepends a compact binary header to the Yocto .raucb bundle, producing a
 single-file firmware package:
 
-    final_image.ldr  =  [ HEADER  84 bytes ]  +  [ .wic.bz2 payload ]  +  [ RPIS tail  264 bytes ]
+    final_image.ldr  =  [ HEADER  84 bytes ]  +  [ .raucb payload ]  +  [ RPIS tail  264 bytes ]
 
 Header layout  (all integers little-endian, total = 84 bytes):
 
@@ -15,11 +15,11 @@ Header layout  (all integers little-endian, total = 84 bytes):
        4       2   uint16    hdr_version    = 2
        6       2   uint16    hdr_size       = 84
        8      32   char[32]  fw_version     null-padded ASCII  e.g. "v0.1.0"
-      40      32   bytes     sha256         raw 32-byte SHA-256 of .wic.bz2 payload
-      72       8   uint64    payload_size   size of .wic.bz2 in bytes
+      40      32   bytes     sha256         raw 32-byte SHA-256 of .raucb payload
+      72       8   uint64    payload_size   size of .raucb in bytes
       80       4   uint32    hdr_crc32      CRC32 of header bytes [0 .. 79]
     ──────────────────────────────────────────────────────────────────────────
-      84     ...   bytes     payload        the .wic.bz2 image
+      84     ...   bytes     payload        the .raucb bundle
     84+N     264   bytes     RPIS tail      optional signature tail (see below)
 
 RPIS Signature Tail layout  (appended after payload, 264 bytes):
@@ -33,7 +33,7 @@ RPIS Signature Tail layout  (appended after payload, 264 bytes):
     ──────────────────────────────────────────────────────────────────────────
      264             total tail size
 
-    Signs:   header.sha256  (the 32-byte SHA-256 of the .wic.bz2 payload)
+    Signs:   header.sha256  (the 32-byte SHA-256 of the .raucb payload)
     Key:     GCP KMS key identified by signer_identity on blockchain
 
 Raspberry Pi verification steps:
@@ -44,7 +44,7 @@ Raspberry Pi verification steps:
     4. Assert  crc32(header[0:80]) == header.hdr_crc32            (header intact)
     5. Assert  header.fw_version  > current_device_version        (rollback check)
     6. Compare header.fw_version  == blockchain["firmware_version"] (version match)
-    7. Read next header.payload_size bytes → .wic.bz2 payload
+    7. Read next header.payload_size bytes → .raucb payload
     8. Assert  sha256(payload)    == header.sha256                (payload intact)
     9. If 264 bytes remain after payload:
          Assert  tail.magic       == b"RPIS"
@@ -229,7 +229,7 @@ def main():
         meta = json.load(f)
 
     fw_version   = meta["firmware_version"]   # e.g. "v0.1.0"
-    img_filename = meta["image_filename"]     # e.g. "core-image-minimal-rpi3-....wic.bz2"
+    img_filename = meta["image_filename"]     # e.g. "iot-gateway-bundle-raspberrypi3.raucb"
 
     print()
     print("=" * 62)
@@ -330,7 +330,7 @@ def main():
     print("  ── Header fields ──")
     print(f"  fw_version   : {parsed['fw_version']:<32}  ← compare against blockchain firmware_version")
     print(f"  sha256       : {parsed['sha256_hex'][:32]}...")
-    print(f"                  ← SHA-256 of .wic.bz2 payload; also what KMS signed")
+    print(f"                  ← SHA-256 of .raucb payload; also what KMS signed")
     print(f"  payload_size : {parsed['payload_size']:,} bytes")
     print(f"  hdr_crc32    : {parsed['hdr_crc32']}  ← verify header not corrupted")
     print()
@@ -347,7 +347,7 @@ def main():
     print("     Assert tail.magic == 'RPIS'")
     print("     Fetch GCP KMS pubkey for signer_identity")
     print("     Assert verify(tail.signature[:tail.sig_len], header.sha256, pubkey)")
-    print(" 10. All pass → authentic → extract .wic.bz2 → flash")
+    print(" 10. All pass → authentic → rauc install payload.raucb")
     print("=" * 62)
     print()
 

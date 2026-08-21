@@ -6,9 +6,9 @@ Full pipeline for building and deploying IoT gateway firmware.
 
 Steps:
   1. cd to project root and run: source sources/poky/oe-init-build-env
-  2. Run: bitbake core-image-minimal
+  2. Run: bitbake iot-gateway-bundle
   3. Verify build succeeded (check Tasks Summary line in log)
-  4. Find the built .wic.bz2 image in DEPLOYDIR
+  4. Find the built .raucb bundle in DEPLOYDIR
   5. Compute SHA-256 + file size
   6. Sign the firmware image digest via Google Cloud KMS (HSM-backed key)
   7. Create a GitHub Release, upload the image + detached signature → get download URL
@@ -70,7 +70,7 @@ PROJECT_ROOT = "/home/ubuntu/raceiotprj"
 OE_INIT      = os.path.join(PROJECT_ROOT, "sources/poky/oe-init-build-env")
 DEPLOY_DIR   = os.path.join(PROJECT_ROOT,
                "build/tmp/deploy/images/raspberrypi3")
-IMAGE_RECIPE = "core-image-minimal"
+IMAGE_RECIPE = "iot-gateway-bundle"
 BOARD        = "raspberrypi3"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -110,7 +110,7 @@ GCP_KEY_VERSION = os.environ.get("GCP_KEY_VERSION", "1")
 
 def run_bitbake_build() -> None:
     """
-    Sources oe-init-build-env and runs bitbake core-image-minimal inside
+    Sources oe-init-build-env and runs bitbake iot-gateway-bundle inside
     a single bash -c call (required because oe-init-build-env uses 'source').
     Streams output live. Raises RuntimeError if build fails.
     """
@@ -122,7 +122,7 @@ def run_bitbake_build() -> None:
     # Build the shell command:
     #   cd <project_root>
     #   source sources/poky/oe-init-build-env   (changes cwd to build/)
-    #   bitbake core-image-minimal
+    #   bitbake iot-gateway-bundle
     cmd = (
         f"cd {PROJECT_ROOT} && "
         f"source {OE_INIT} && "
@@ -193,16 +193,16 @@ def run_bitbake_build() -> None:
 
 def find_image() -> tuple[str, str]:
     """
-    Returns (full_path, filename) of the most recently modified .wic.bz2
-    image in DEPLOY_DIR.
+    Returns (full_path, filename) of the most recently modified .raucb
+    bundle in DEPLOY_DIR.
     """
     print(f"[2/6] Locating firmware image in {DEPLOY_DIR} ...")
     candidates = [
         f for f in os.listdir(DEPLOY_DIR)
-        if f.endswith(".rootfs.wic.bz2") and IMAGE_RECIPE in f
+        if f.endswith(".raucb") and IMAGE_RECIPE in f
     ]
     if not candidates:
-        raise RuntimeError(f"No .rootfs.wic.bz2 image found in {DEPLOY_DIR}")
+        raise RuntimeError(f"No .raucb bundle found in {DEPLOY_DIR}")
 
     # Pick the one with the latest mtime (in case there are symlinks + timestamped)
     candidates.sort(
@@ -300,7 +300,7 @@ def sign_firmware_hsm(image_path: str, sha256_bytes: bytes) -> tuple[bytes, str]
         openssl dgst -sha256 -sigopt rsa_padding_mode:pss \\
             -sigopt rsa_pss_saltlen:-1 \\
             -verify firmware-pubkey.pem \\
-            -signature <image>.wic.bz2.sig <image>.wic.bz2
+            -signature <image>.raucb.sig <image>.raucb
 
     Returns (signature_bytes, sig_file_path).
     """
