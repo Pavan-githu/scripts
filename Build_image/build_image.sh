@@ -64,7 +64,7 @@ OUTPUT_DIR="$PROJECT_DIR/scripts/Build_image"
 METADATA_JSON="$OUTPUT_DIR/firmware-metadata.json"
 TMP_META_JSON="/tmp/firmware-meta.json"
 DEPLOY_SCRIPT="$PROJECT_DIR/scripts/deploy_firmware.py"
-IMAGE_RECIPE="core-image-minimal"
+IMAGE_RECIPE="iot-gateway-bundle"
 BOARD="raspberrypi3"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -170,16 +170,16 @@ echo ""
 separator
 log "[5/11] Locating firmware image in $IMAGE_DEPLOY_DIR ..."
 
-# Pick the most-recently modified .rootfs.wic.bz2 for this recipe
-IMAGE_PATH=$(ls -t "$IMAGE_DEPLOY_DIR/${IMAGE_RECIPE}-${BOARD}-"*.rootfs.wic.bz2 \
+# Pick the most-recently modified .raucb bundle for this recipe
+IMAGE_PATH=$(ls -t "$IMAGE_DEPLOY_DIR/${IMAGE_RECIPE}-${BOARD}"*.raucb \
              2>/dev/null | head -n 1 || true)
 
 if [ -z "$IMAGE_PATH" ]; then
-    # Fallback: any .wic.bz2 in the deploy directory
-    IMAGE_PATH=$(ls -t "$IMAGE_DEPLOY_DIR/"*.rootfs.wic.bz2 2>/dev/null | head -n 1 || true)
+    # Fallback: any .raucb in the deploy directory
+    IMAGE_PATH=$(ls -t "$IMAGE_DEPLOY_DIR/"*.raucb 2>/dev/null | head -n 1 || true)
 fi
 
-[ -n "$IMAGE_PATH" ] || err "No .rootfs.wic.bz2 image found in $IMAGE_DEPLOY_DIR"
+[ -n "$IMAGE_PATH" ] || err "No .raucb bundle found in $IMAGE_DEPLOY_DIR"
 
 IMAGE_FILENAME="$(basename "$IMAGE_PATH")"
 IMAGE_SIZE_BYTES=$(wc -c < "$IMAGE_PATH")
@@ -644,9 +644,9 @@ echo "  Final image  : ${LDR_PATH:-n/a}"
 echo "  Metadata     : $METADATA_JSON"
 echo "  Build log    : $BUILD_LOG"
 echo ""
-echo "  To flash the final image to an SD card:"
-echo "    python3 -c \"import sys; data=open('${LDR_PATH:-}','rb').read(); open('/tmp/payload.wic.bz2','wb').write(data[116:])\""
-echo "    bzcat /tmp/payload.wic.bz2 | sudo dd of=/dev/sdX bs=4M status=progress"
+echo "  To install the RAUC bundle on the device:"
+echo "    python3 -c \"import sys; data=open('${LDR_PATH:-}','rb').read(); open('/tmp/payload.raucb','wb').write(data[84:])\""
+echo "    rauc install /tmp/payload.raucb"
 echo ""
 echo "  To copy the final image to your local machine:"
 echo "    scp ubuntu@<vps-ip>:${LDR_PATH:-$IMAGE_PATH} ./"
