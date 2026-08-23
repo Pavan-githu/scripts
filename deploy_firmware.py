@@ -77,7 +77,7 @@ BOARD        = "raspberrypi3"
 # Config from environment
 # ─────────────────────────────────────────────────────────────────────────────
 
-RPC_URL       = os.environ.get("RPC_URL",       "http://192.168.1.7:8545")
+RPC_URL       = os.environ.get("RPC_URL",       "http://192.168.1.6:8545")
 CONTRACT_ADDR = os.environ.get("CONTRACT_ADDR", "0x5FbDB2315678afecb367f032d93F642f64180aa3")
 SIGNER_KEY    = os.environ.get("SIGNER_KEY",    "")
 GITHUB_TOKEN  = os.environ.get("GITHUB_TOKEN",  "")
