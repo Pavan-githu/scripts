@@ -56,11 +56,16 @@ done
 [ -n "${CONTRACT_ADDR:-}" ]  || err "CONTRACT_ADDR is not set in .env.secrets"
 [ -n "${SIGNER_KEY:-}"    ]  || err "SIGNER_KEY is not set in .env.secrets"
 
-# Install eth_account if missing (needed for local tx signing)
-if ! python3 -c "from eth_account import Account" 2>/dev/null; then
-    log "Installing eth-account..."
-    python3 -m pip install --quiet eth-account eth-hash[pycryptodome] \
-        || err "Failed to install eth-account. Run: pip3 install eth-account"
+# Install required Python packages if missing
+_missing_pkgs=""
+python3 -c "from eth_account import Account" 2>/dev/null || _missing_pkgs="$_missing_pkgs eth-account eth-hash[pycryptodome]"
+python3 -c "import requests"                 2>/dev/null || _missing_pkgs="$_missing_pkgs requests"
+
+if [ -n "$_missing_pkgs" ]; then
+    log "Installing missing Python packages:$_missing_pkgs"
+    python3 -m pip install --quiet $_missing_pkgs \
+        || python3 -m pip install --quiet --break-system-packages $_missing_pkgs \
+        || err "Failed to install:$_missing_pkgs — activate a venv first: source ~/.venvs/web3/bin/activate"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -116,35 +121,57 @@ def encode_string(s: str) -> bytes:
     pad  = (32 - len(data) % 32) % 32
     return uint256_word(len(data)) + data + b"\x00" * pad
 
-# ── Function selector ─────────────────────────────────────────────────────────
-SIG      = "writeFirmwareMetadata(string,string,string,string,string,string,uint256,string,uint256)"
+# ── Function selector (14-param signature matching blockchain_logger.cpp) ────
+SIG      = ("writeFirmwareMetadata("
+            "string,string,string,string,string,string,"
+            "uint256,string,uint256,uint8,"
+            "string,string,string,string)")
 selector = keccak(SIG.encode("utf-8"))[:4]
 
-# ── Encode 9 params: 7 strings + 2 uint256 ───────────────────────────────────
-# index: 0=firmwareHash  1=firmwareVersion  2=timestamp  3=signerIdentity
-#        4=downloadUrl  5=imageFilename  6=imageSizeBytes(uint256)
-#        7=finalImageFilename  8=finalImageSizeBytes(uint256)
-string_vals = [
-    meta["firmware_hash"], meta["firmware_version"], meta["timestamp"],
-    meta["signer_identity"], meta["download_url"],
-    meta["image_filename"], meta["final_image_filename"],
+# ── 14 params matching blockchain_logger.cpp ABI layout ──────────────────────
+# [0]  firmwareHash        string
+# [1]  firmwareVersion     string
+# [2]  timestamp           string
+# [3]  signerIdentity      string
+# [4]  downloadUrl         string
+# [5]  imageFilename       string
+# [6]  imageSizeBytes      uint256  (inline)
+# [7]  finalImageFilename  string
+# [8]  finalImageSizeBytes uint256  (inline)
+# [9]  approvalStage       uint8    (inline, default 0 = PENDING_OEM)
+# [10] approvedByOem       string
+# [11] oemApprovedAt       string
+# [12] approvedByFleet     string
+# [13] fleetApprovedAt     string
+params = [
+    ("string",  meta["firmware_hash"]),
+    ("string",  meta["firmware_version"]),
+    ("string",  meta["timestamp"]),
+    ("string",  meta["signer_identity"]),
+    ("string",  meta["download_url"]),
+    ("string",  meta["image_filename"]),
+    ("uint256", meta["image_size_bytes"]),
+    ("string",  meta["final_image_filename"]),
+    ("uint256", meta["final_image_size_bytes"]),
+    ("uint8",   meta.get("approval_stage", 0)),
+    ("string",  meta.get("approved_by_oem",   "")),
+    ("string",  meta.get("oem_approved_at",    "")),
+    ("string",  meta.get("approved_by_fleet",  "")),
+    ("string",  meta.get("fleet_approved_at",  "")),
 ]
-encoded_strs = [encode_string(s) for s in string_vals]
 
 head   = bytearray()
 tail   = bytearray()
-offset = 9 * 32   # 9 head slots × 32 bytes each
-si     = 0
-for i in range(9):
-    if i == 6:      # imageSizeBytes (uint256)
-        head += uint256_word(meta["image_size_bytes"])
-    elif i == 8:    # finalImageSizeBytes (uint256)
-        head += uint256_word(meta["final_image_size_bytes"])
-    else:           # string — emit offset pointer, append data to tail
+offset = len(params) * 32   # head section = 14 × 32 bytes
+
+for ptype, pval in params:
+    if ptype == "string":
         head += uint256_word(offset)
-        tail += encoded_strs[si]
-        offset += len(encoded_strs[si])
-        si += 1
+        enc   = encode_string(str(pval))
+        tail += enc
+        offset += len(enc)
+    else:   # uint256 / uint8 — inline
+        head += uint256_word(int(pval))
 
 calldata = "0x" + (selector + bytes(head) + bytes(tail)).hex()
 
@@ -180,18 +207,18 @@ signed   = acct.sign_transaction(tx)
 tx_hash  = rpc("eth_sendRawTransaction", [signed.raw_transaction.hex()])
 
 # ── Print diagnostics to stderr (not captured by $(...)) ─────────────────────
-print(f"  signer   : {acct.address}", file=sys.stderr)
-print(f"  chain_id : {chain_id}", file=sys.stderr)
-print(f"  nonce    : {nonce}", file=sys.stderr)
-print(f"  gas      : {tx['gas']}", file=sys.stderr)
-print(f"  calldata : {len(calldata)} chars", file=sys.stderr)
+print(f"  signer         : {acct.address}", file=sys.stderr)
+print(f"  chain_id       : {chain_id}", file=sys.stderr)
+print(f"  nonce          : {nonce}", file=sys.stderr)
+print(f"  gas            : {tx['gas']}", file=sys.stderr)
+print(f"  approval_stage : {meta.get('approval_stage', 0)}", file=sys.stderr)
+print(f"  calldata       : {len(calldata)} chars", file=sys.stderr)
 
 # ── Write tx_hash back to metadata ───────────────────────────────────────────
 meta["tx_hash"] = tx_hash
 with open(meta_path, "w") as f:
     json.dump(meta, f, indent=2)
 
-# stdout — captured by bash $(...) — only the hash
 print(tx_hash)
 PYEOF
 )
