@@ -259,7 +259,7 @@ chain_id  = int(rpc("eth_chainId",  []), 16)
 tx = {
     "to":       contract_addr,
     "value":    0,
-    "gas":      400_000,
+    "gas":      1_200_000,
     "gasPrice": gas_price,
     "nonce":    nonce,
     "data":     calldata,
