@@ -5,22 +5,19 @@ Build_image/add_firmware_header.py
 Prepends a compact binary header to the Yocto .raucb bundle, producing a
 single-file firmware package:
 
-    final_image.ldr  =  [ HEADER  84 bytes ]  +  [ .raucb payload ]  +  [ RPIS tail  264 bytes ]
+    final_image.ldr  =  [ HEADER  48 bytes ]  +  [ .raucb payload ]  +  [ RPIS tail  264 bytes ]
 
-Header layout  (all integers little-endian, total = 84 bytes):
+Header layout  (all integers little-endian, total = 48 bytes):
 
     Offset   Size  Type      Field          Description
     ──────   ────  ────────  ─────────────  ────────────────────────────────────
        0       4   bytes     magic          b"RPIF"  (RasPi Image Firmware)
-       4       2   uint16    hdr_version    = 2
-       6       2   uint16    hdr_size       = 84
-       8      32   char[32]  fw_version     null-padded ASCII  e.g. "v0.1.0"
-      40      32   bytes     sha256         raw 32-byte SHA-256 of .raucb payload
-      72       8   uint64    payload_size   size of .raucb in bytes
-      80       4   uint32    hdr_crc32      CRC32 of header bytes [0 .. 79]
+       4      32   bytes     sha256         raw 32-byte SHA-256 of .raucb payload
+      36       8   uint64    payload_size   size of .raucb in bytes
+      44       4   uint32    hdr_crc32      CRC32/ISO-HDLC of header[0..43]
     ──────────────────────────────────────────────────────────────────────────
-      84     ...   bytes     payload        the .raucb bundle
-    84+N     264   bytes     RPIS tail      optional signature tail (see below)
+      48     ...   bytes     payload        the .raucb bundle
+    48+N     264   bytes     RPIS tail      optional signature tail (see below)
 
 RPIS Signature Tail layout  (appended after payload, 264 bytes):
 
@@ -38,36 +35,29 @@ RPIS Signature Tail layout  (appended after payload, 264 bytes):
 
 Raspberry Pi verification steps:
 
-    1. Read first 84 bytes → parse header
+    1. Read first 48 bytes → parse header
     2. Assert  header.magic       == b"RPIF"
-    3. Assert  header.hdr_version == 2
-    4. Assert  crc32(header[0:80]) == header.hdr_crc32            (header intact)
-    5. Assert  header.fw_version  > current_device_version        (rollback check)
-    6. Compare header.fw_version  == blockchain["firmware_version"] (version match)
-    7. Read next header.payload_size bytes → .raucb payload
-    8. Assert  sha256(payload)    == header.sha256                (payload intact)
-    9. If 264 bytes remain after payload:
+    3. Assert  crc32(header[0:44]) == header.hdr_crc32            (header intact)
+    4. Read next header.payload_size bytes → .raucb payload
+    5. Assert  sha256(payload)    == header.sha256                (payload intact)
+    6. If 264 bytes remain after payload:
          Assert  tail.magic       == b"RPIS"
          Fetch GCP KMS public key for signer_identity (from blockchain)
          Assert  verify(tail.signature[:tail.sig_len], header.sha256, pubkey)
-   10. All assertions pass → image is authentic → proceed with flash
+    7. All assertions pass → image is authentic → proceed with flash
 
 C struct reference for the RPi-side verifier (https_server.cpp / OTA updater):
 
     #include <stdint.h>
     #define FW_MAGIC     "RPIF"
-    #define HDR_VERSION  2
-    #define HDR_SIZE     84
+    #define HDR_SIZE     48
 
     typedef struct __attribute__((packed)) {
         uint8_t  magic[4];       /* "RPIF"                           */
-        uint16_t hdr_version;    /* 2                                */
-        uint16_t hdr_size;       /* 84                               */
-        char     fw_version[32]; /* e.g. "v0.1.0\\0..."               */
         uint8_t  sha256[32];     /* raw SHA-256 digest of payload    */
         uint64_t payload_size;   /* bytes                            */
-        uint32_t hdr_crc32;      /* crc32 of header[0..79]           */
-    } FirmwareHeader;            /* sizeof = 84                      */
+        uint32_t hdr_crc32;      /* CRC32/ISO-HDLC of header[0..43] */
+    } FirmwareHeader;            /* sizeof = 48                      */
 
     /* RPIS Signature Tail (264 bytes, appended after payload) */
     #define RPIS_MAGIC      "RPIS"
@@ -99,22 +89,18 @@ import zlib
 # ─────────────────────────────────────────────────────────────────────────────
 
 MAGIC           = b"RPIF"
-HDR_VERSION     = 2
-HDR_SIZE        = 84    # bytes
+HDR_SIZE        = 48    # bytes
 
-# struct format: little-endian, fixed 84 bytes
+# struct format: little-endian, fixed 48 bytes
 #   4s  magic
-#   H   hdr_version (uint16)
-#   H   hdr_size    (uint16)
-#   32s fw_version  (char[32])
 #   32s sha256      (bytes[32])
 #   Q   payload_size(uint64)
-#   I   hdr_crc32   (uint32)  — covers bytes [0..79]
-HEADER_STRUCT   = struct.Struct("<4s H H 32s 32s Q I")
+#   I   hdr_crc32   (uint32)  — covers bytes [0..43]
+HEADER_STRUCT   = struct.Struct("<4s 32s Q I")
 assert HEADER_STRUCT.size == HDR_SIZE, f"Header struct size mismatch: {HEADER_STRUCT.size}"
 
 # Bytes covered by the CRC (everything except the last 4-byte crc32 field)
-HDR_CRC_BYTES   = HDR_SIZE - 4   # 80
+HDR_CRC_BYTES   = HDR_SIZE - 4   # 44
 
 # RPIS signature tail constants
 RPIS_MAGIC           = b"RPIS"
@@ -143,18 +129,14 @@ def sha256_of_file(path: str) -> bytes:
     return h.digest()
 
 
-def build_header(fw_version: str,
-                 sha256_raw: bytes, payload_size: int) -> bytes:
+def build_header(sha256_raw: bytes, payload_size: int) -> bytes:
     """
-    Pack the 84-byte firmware header (hdr_version=2, no timestamp field).
-    hdr_crc32 covers bytes [0..79] (all fields except the CRC field itself).
+    Pack the 48-byte firmware header.
+    hdr_crc32 covers bytes [0..43] (all fields except the CRC field itself).
     """
     # Pack with placeholder CRC = 0 first to compute the actual CRC
     hdr_no_crc = HEADER_STRUCT.pack(
         MAGIC,
-        HDR_VERSION,
-        HDR_SIZE,
-        encode_field(fw_version, 32),
         sha256_raw,
         payload_size,
         0,              # placeholder CRC
@@ -164,9 +146,6 @@ def build_header(fw_version: str,
     # Repack with real CRC
     return HEADER_STRUCT.pack(
         MAGIC,
-        HDR_VERSION,
-        HDR_SIZE,
-        encode_field(fw_version, 32),
         sha256_raw,
         payload_size,
         crc,
@@ -174,19 +153,15 @@ def build_header(fw_version: str,
 
 
 def verify_header(data: bytes) -> dict:
-    """Parse and self-verify an 84-byte header blob. Returns field dict."""
+    """Parse and self-verify a 48-byte header blob. Returns field dict."""
     if len(data) < HDR_SIZE:
         raise ValueError(f"Data too short: {len(data)} < {HDR_SIZE}")
 
-    (magic, hdr_ver, hdr_sz,
-     fw_ver_b, sha256_raw,
+    (magic, sha256_raw,
      payload_size, stored_crc) = HEADER_STRUCT.unpack(data[:HDR_SIZE])
 
     if magic != MAGIC:
         raise ValueError(f"Bad magic: {magic!r}, expected {MAGIC!r}")
-
-    if hdr_ver != HDR_VERSION:
-        raise ValueError(f"Unsupported hdr_version: {hdr_ver}, expected {HDR_VERSION}")
 
     computed_crc = zlib.crc32(data[:HDR_CRC_BYTES]) & 0xFFFFFFFF
     if computed_crc != stored_crc:
@@ -196,9 +171,6 @@ def verify_header(data: bytes) -> dict:
         )
 
     return {
-        "hdr_version":  hdr_ver,
-        "hdr_size":     hdr_sz,
-        "fw_version":   fw_ver_b.rstrip(b"\x00").decode("ascii"),
         "sha256_hex":   sha256_raw.hex(),
         "payload_size": payload_size,
         "hdr_crc32":    f"0x{stored_crc:08x}",
@@ -271,15 +243,12 @@ def main():
             print( "         The payload may have changed since build_image.sh ran.")
 
     # ── Build header ──────────────────────────────────────────────────────────
-    print("[3/4] Building 84-byte firmware header (hdr_version=2, no timestamp)...")
-    header_bytes = build_header(fw_version, sha256_raw, payload_size)
+    print("[3/4] Building 48-byte firmware header...")
+    header_bytes = build_header(sha256_raw, payload_size)
 
     # Self-verify immediately
     parsed = verify_header(header_bytes)
     print(f"       magic        : {MAGIC.decode()}")
-    print(f"       hdr_version  : {parsed['hdr_version']}")
-    print(f"       hdr_size     : {parsed['hdr_size']} bytes")
-    print(f"       fw_version   : {parsed['fw_version']}")
     print(f"       sha256       : {parsed['sha256_hex']}")
     print(f"       payload_size : {parsed['payload_size']:,} bytes")
     print(f"       hdr_crc32    : {parsed['hdr_crc32']}")
@@ -300,7 +269,7 @@ def main():
 
     final_size = os.path.getsize(ldr_path)
     print(f"       Total   : {final_size:,} bytes  "
-          f"(84 header + {payload_size:,} payload)")
+          f"(48 header + {payload_size:,} payload)")
 
     # ── Update firmware-metadata.json ────────────────────────────────────────
     meta["final_image_path"]      = ldr_path
@@ -308,9 +277,6 @@ def main():
     meta["final_image_size_bytes"] = final_size
     meta["header"] = {
         "magic":        MAGIC.decode(),
-        "hdr_version":  parsed["hdr_version"],
-        "hdr_size":     parsed["hdr_size"],
-        "fw_version":   parsed["fw_version"],
         "sha256":       parsed["sha256_hex"],
         "payload_size": parsed["payload_size"],
         "hdr_crc32":    parsed["hdr_crc32"],
@@ -328,26 +294,22 @@ def main():
     print(f"  Total size : {final_size:,} bytes")
     print()
     print("  ── Header fields ──")
-    print(f"  fw_version   : {parsed['fw_version']:<32}  ← compare against blockchain firmware_version")
     print(f"  sha256       : {parsed['sha256_hex'][:32]}...")
     print(f"                  ← SHA-256 of .raucb payload; also what KMS signed")
     print(f"  payload_size : {parsed['payload_size']:,} bytes")
     print(f"  hdr_crc32    : {parsed['hdr_crc32']}  ← verify header not corrupted")
     print()
     print("  ── RPi verification sequence ──")
-    print("  1. Fetch blockchain metadata  → get firmware_version, signer_identity")
-    print("  2. Download final_image.ldr   → read first 84 bytes as header")
-    print("  3. Assert magic == 'RPIF' and hdr_version == 2")
-    print("  4. Assert crc32(header[0:80]) == header.hdr_crc32")
-    print("  5. Assert header.fw_version > current_device_version  (rollback check)")
-    print("  6. Assert header.fw_version  == blockchain.firmware_version")
-    print("  7. Read next header.payload_size bytes (payload)")
-    print("  8. Assert sha256(payload)    == header.sha256")
-    print("  9. If 264 bytes remain → parse RPIS tail")
+    print("  1. Download final_image.ldr   → read first 48 bytes as header")
+    print("  2. Assert magic == 'RPIF'")
+    print("  3. Assert crc32(header[0:44]) == header.hdr_crc32")
+    print("  4. Read next header.payload_size bytes (payload)")
+    print("  5. Assert sha256(payload)    == header.sha256")
+    print("  6. If 264 bytes remain → parse RPIS tail")
     print("     Assert tail.magic == 'RPIS'")
     print("     Fetch GCP KMS pubkey for signer_identity")
     print("     Assert verify(tail.signature[:tail.sig_len], header.sha256, pubkey)")
-    print(" 10. All pass → authentic → rauc install payload.raucb")
+    print("  7. All pass → authentic → rauc install payload.raucb")
     print("=" * 62)
     print()
 
