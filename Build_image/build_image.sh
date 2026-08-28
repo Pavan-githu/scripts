@@ -413,6 +413,70 @@ fi
 echo ""
 
 # ─────────────────────────────────────────────────────────────────────────────
+# [Optional] Verify HSM signature immediately after signing
+#
+# Aborts pipeline if the signature is invalid — prevents a bad image from
+# reaching the blockchain or the device.
+# ─────────────────────────────────────────────────────────────────────────────
+separator
+METADATA_JSON_PATH="$METADATA_JSON" \
+IMAGE_DEPLOY_DIR_ENV="$IMAGE_DEPLOY_DIR" \
+python3 - <<'PYEOF'
+import json, os, subprocess, sys
+
+meta_path  = os.environ["METADATA_JSON_PATH"]
+deploy_dir = os.environ["IMAGE_DEPLOY_DIR_ENV"]
+
+with open(meta_path) as f:
+    meta = json.load(f)
+
+sig_hex    = meta.get("hsm_signature", "")
+sig_file   = meta.get("sig_file",      "")
+pubkey_pem = meta.get("pubkey_file",   "")
+image_fn   = meta.get("image_filename","")
+image_path = os.path.join(deploy_dir, image_fn) if image_fn else ""
+
+if not sig_hex:
+    print("  Skipping verify — hsm_signature absent (signing was skipped).")
+    raise SystemExit(0)
+
+missing = [n for n, p in [("sig_file", sig_file), ("pubkey_file", pubkey_pem),
+                           ("raucb image", image_path)]
+           if not p or not os.path.exists(p)]
+if missing:
+    print(f"  ERROR: cannot verify — files not found: {missing}", file=sys.stderr)
+    raise SystemExit(1)
+
+print(f"  Verifying RSA-PSS signature...")
+print(f"    pubkey : {pubkey_pem}")
+print(f"    sig    : {sig_file}")
+print(f"    payload: {image_path}")
+
+result = subprocess.run(
+    ["openssl", "dgst", "-sha256",
+     "-sigopt", "rsa_padding_mode:pss",
+     "-sigopt", "rsa_pss_saltlen:-1",
+     "-verify",    pubkey_pem,
+     "-signature", sig_file,
+     image_path],
+    capture_output=True, text=True
+)
+
+if result.returncode == 0:
+    print(f"  ✔  Signature VERIFIED — {result.stdout.strip()}")
+else:
+    print(f"  ✘  Signature INVALID", file=sys.stderr)
+    print(result.stderr.strip(), file=sys.stderr)
+    raise SystemExit(1)
+PYEOF
+
+if [ $? -ne 0 ]; then
+    err "[Verify] HSM signature INVALID — pipeline aborted. Do not deploy this image."
+fi
+ok "[Verify] HSM signature verified against Cloud KMS public key."
+echo ""
+
+# ─────────────────────────────────────────────────────────────────────────────
 # [Optional] Append RPIS signature tail to .ldr
 #
 # Activated when KMS signing wrote hsm_signature into firmware-metadata.json.
