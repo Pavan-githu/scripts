@@ -1,0 +1,141 @@
+
+### Shell environment set up for builds. ###
+
+You can now run 'bitbake <target>'
+
+Common targets are:
+    core-image-minimal
+    core-image-full-cmdline
+    core-image-sato
+    core-image-weston
+    meta-toolchain
+    meta-ide-support
+
+You can also run generated qemu images with a command like 'runqemu qemux86'
+
+Other commonly useful commands are:
+ - 'devtool' and 'recipetool' handle common recipe tasks
+ - 'bitbake-layers' handles common layer tasks
+ - 'oe-pkgdata-util' handles common target package tasks
+Loading cache...done.
+Loaded 3923 entries from dependency cache.
+Parsing recipes...done.
+Parsing of 2518 .bb files complete (2517 cached, 1 parsed). 3924 targets, 131 skipped, 0 masked, 0 errors.
+Removing 1 recipes from the cortexa7t2hf-neon-vfpv4 sysroot...done.
+Removing 1 recipes from the raspberrypi3 sysroot...done.
+NOTE: Resolving any missing task queue dependencies
+
+Build Configuration:
+BB_VERSION           = "2.0.0"
+BUILD_SYS            = "x86_64-linux"
+NATIVELSBSTRING      = "universal"
+TARGET_SYS           = "arm-poky-linux-gnueabi"
+MACHINE              = "raspberrypi3"
+DISTRO               = "poky"
+DISTRO_VERSION       = "4.0.35"
+TUNE_FEATURES        = "arm vfp cortexa7 neon vfpv4 thumb callconvention-hard"
+TARGET_FPU           = "hard"
+meta                 
+meta-poky            
+meta-yocto-bsp       = "kirkstone:4a5e618f5713600552c6c3edb1bfaa42c4506789"
+meta-raspberrypi     = "kirkstone:255500dd9f6a01a3445ac491d1abc401801e3bad"
+meta-oe              
+meta-python          
+meta-networking      
+meta-filesystems     
+meta-webserver       = "kirkstone:9d8ef26a9693e2c70ae34abe1a753873d42ec588"
+meta-userapp-package = "feature/firmwareUpdate:019b641fbe227894be5791c63691c25b6f8fc630"
+meta-rauc            = "kirkstone:4cb7c47686d5dec9bacae6110f1bcaac57568691"
+meta-rauc-raspberrypi = "kirkstone:05731f654511dc817d55e9cb02899efed3fe5bc3"
+
+Initialising tasks...done.
+Sstate summary: Wanted 11 Local 0 Mirrors 0 Missed 11 Current 1757 (0% match, 99% complete)
+Removing 5 stale sstate objects for arch raspberrypi3...done.
+NOTE: Executing Tasks
+NOTE: Running task 2631 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/meta-userapp-package/recipes-apps/iot-gateway/iot-gateway-apps_0.1.bb:do_fetch)
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_fetch: Started
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_fetch: Succeeded
+NOTE: Running task 2925 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/meta-userapp-package/recipes-apps/iot-gateway/iot-gateway-apps_0.1.bb:do_unpack)
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_unpack: Started
+NOTE: Running task 3209 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/meta-userapp-package/recipes-apps/iot-gateway/iot-gateway-apps_0.1.bb:do_prepare_recipe_sysroot)
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_prepare_recipe_sysroot: Started
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_unpack: Succeeded
+NOTE: Running task 3676 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/meta-userapp-package/recipes-apps/iot-gateway/iot-gateway-apps_0.1.bb:do_patch)
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_patch: Started
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_prepare_recipe_sysroot: Succeeded
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_patch: Succeeded
+NOTE: Running task 4218 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/meta-userapp-package/recipes-apps/iot-gateway/iot-gateway-apps_0.1.bb:do_deploy_source_date_epoch)
+NOTE: Running task 4283 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/meta-userapp-package/recipes-apps/iot-gateway/iot-gateway-apps_0.1.bb:do_populate_lic)
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_deploy_source_date_epoch: Started
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_populate_lic: Started
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_populate_lic: Succeeded
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_deploy_source_date_epoch: Succeeded
+NOTE: Running task 4368 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/meta-userapp-package/recipes-apps/iot-gateway/iot-gateway-apps_0.1.bb:do_configure)
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_configure: Started
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_configure: Succeeded
+NOTE: Running task 4369 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/meta-userapp-package/recipes-apps/iot-gateway/iot-gateway-apps_0.1.bb:do_compile)
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_compile: Started
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_compile: Succeeded
+NOTE: Running task 4370 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/meta-userapp-package/recipes-apps/iot-gateway/iot-gateway-apps_0.1.bb:do_install)
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_install: Started
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_install: Succeeded
+NOTE: Running task 4371 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/meta-userapp-package/recipes-apps/iot-gateway/iot-gateway-apps_0.1.bb:do_package)
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_package: Started
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_package: Succeeded
+NOTE: Running task 4372 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/meta-userapp-package/recipes-apps/iot-gateway/iot-gateway-apps_0.1.bb:do_packagedata)
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_packagedata: Started
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_packagedata: Succeeded
+NOTE: Running task 4373 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/meta-userapp-package/recipes-apps/iot-gateway/iot-gateway-apps_0.1.bb:do_package_write_rpm)
+NOTE: Running task 4374 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/meta-userapp-package/recipes-apps/iot-gateway/iot-gateway-apps_0.1.bb:do_package_qa)
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_package_write_rpm: Started
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_package_qa: Started
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_package_qa: Succeeded
+NOTE: recipe iot-gateway-apps-0.7.0-r0: task do_package_write_rpm: Succeeded
+NOTE: Running task 4375 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/poky/meta/recipes-core/images/core-image-minimal.bb:do_rootfs)
+NOTE: recipe core-image-minimal-1.0-r0: task do_rootfs: Started
+NOTE: recipe core-image-minimal-1.0-r0: task do_rootfs: Succeeded
+NOTE: Running task 4376 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/poky/meta/recipes-core/images/core-image-minimal.bb:do_flush_pseudodb)
+NOTE: recipe core-image-minimal-1.0-r0: task do_flush_pseudodb: Started
+NOTE: recipe core-image-minimal-1.0-r0: task do_flush_pseudodb: Succeeded
+NOTE: Running task 4377 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/poky/meta/recipes-core/images/core-image-minimal.bb:do_image_qa)
+NOTE: recipe core-image-minimal-1.0-r0: task do_image_qa: Started
+NOTE: recipe core-image-minimal-1.0-r0: task do_image_qa: Succeeded
+NOTE: Running task 4378 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/poky/meta/recipes-core/images/core-image-minimal.bb:do_image)
+NOTE: recipe core-image-minimal-1.0-r0: task do_image: Started
+NOTE: recipe core-image-minimal-1.0-r0: task do_image: Succeeded
+NOTE: Running task 4379 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/poky/meta/recipes-core/images/core-image-minimal.bb:do_write_wks_template)
+NOTE: Running task 4380 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/poky/meta/recipes-core/images/core-image-minimal.bb:do_rootfs_wicenv)
+NOTE: Running task 4381 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/poky/meta/recipes-core/images/core-image-minimal.bb:do_image_ext4)
+NOTE: recipe core-image-minimal-1.0-r0: task do_write_wks_template: Started
+NOTE: recipe core-image-minimal-1.0-r0: task do_write_wks_template: Succeeded
+NOTE: recipe core-image-minimal-1.0-r0: task do_rootfs_wicenv: Started
+NOTE: recipe core-image-minimal-1.0-r0: task do_rootfs_wicenv: Succeeded
+NOTE: Running task 4382 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/poky/meta/recipes-core/images/core-image-minimal.bb:do_image_wic)
+NOTE: recipe core-image-minimal-1.0-r0: task do_image_ext4: Started
+NOTE: recipe core-image-minimal-1.0-r0: task do_image_wic: Started
+NOTE: recipe core-image-minimal-1.0-r0: task do_image_ext4: Succeeded
+NOTE: recipe core-image-minimal-1.0-r0: task do_image_wic: Succeeded
+NOTE: Running task 4383 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/poky/meta/recipes-core/images/core-image-minimal.bb:do_image_complete)
+NOTE: recipe core-image-minimal-1.0-r0: task do_image_complete: Started
+NOTE: recipe core-image-minimal-1.0-r0: task do_image_complete: Succeeded
+NOTE: Running task 4384 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/meta-userapp-package/recipes-core/images/iot-gateway-bundle.bb:do_unpack)
+NOTE: recipe iot-gateway-bundle-1.0-r0: task do_unpack: Started
+NOTE: recipe iot-gateway-bundle-1.0-r0: task do_unpack: Succeeded
+NOTE: Running noexec task 4385 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/meta-userapp-package/recipes-core/images/iot-gateway-bundle.bb:do_patch)
+NOTE: Running task 4386 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/meta-userapp-package/recipes-core/images/iot-gateway-bundle.bb:do_deploy_source_date_epoch)
+NOTE: Running task 4387 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/meta-userapp-package/recipes-core/images/iot-gateway-bundle.bb:do_populate_lic)
+NOTE: recipe iot-gateway-bundle-1.0-r0: task do_deploy_source_date_epoch: Started
+NOTE: recipe iot-gateway-bundle-1.0-r0: task do_deploy_source_date_epoch: Succeeded
+NOTE: Running task 4388 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/meta-userapp-package/recipes-core/images/iot-gateway-bundle.bb:do_configure)
+NOTE: recipe iot-gateway-bundle-1.0-r0: task do_populate_lic: Started
+NOTE: recipe iot-gateway-bundle-1.0-r0: task do_populate_lic: Succeeded
+NOTE: recipe iot-gateway-bundle-1.0-r0: task do_configure: Started
+NOTE: recipe iot-gateway-bundle-1.0-r0: task do_configure: Succeeded
+NOTE: Running task 4389 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/meta-userapp-package/recipes-core/images/iot-gateway-bundle.bb:do_bundle)
+NOTE: recipe iot-gateway-bundle-1.0-r0: task do_bundle: Started
+NOTE: recipe iot-gateway-bundle-1.0-r0: task do_bundle: Succeeded
+NOTE: Running task 4390 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/meta-userapp-package/recipes-core/images/iot-gateway-bundle.bb:do_deploy)
+NOTE: recipe iot-gateway-bundle-1.0-r0: task do_deploy: Started
+NOTE: recipe iot-gateway-bundle-1.0-r0: task do_deploy: Succeeded
+NOTE: Running noexec task 4391 of 4391 (/home/pg3930/capstone1/raceiotprj/sources/meta-userapp-package/recipes-core/images/iot-gateway-bundle.bb:do_build)
+NOTE: Tasks Summary: Attempted 4391 tasks of which 4361 didn't need to be rerun and all succeeded.
