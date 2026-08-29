@@ -1,31 +1,31 @@
 {
-  "firmware_hash": "sha256:53837211ce935636f6c2d395fc71d7e9a8d0d58ca8d74187c09f8a3fce98d0ad",
-  "firmware_version": "v0.7.0",
-  "timestamp": "2026-08-28T20:51:22Z",
+  "firmware_hash": "sha256:aed29727eadf77bce03249ddb9b984a5d7bf28c4174829aa70fd3f8fdd3a7347",
+  "firmware_version": "v0.8.0",
+  "timestamp": "2026-08-29T07:20:00Z",
   "signer_identity": "projects/project-9d4ab863-a976-47a2-9f2/locations/global/keyRings/firmware-signing/cryptoKeys/firmware-key/cryptoKeyVersions/1",
-  "download_url": "https://github.com/Pavan-githu/meta-userapp-package/releases/download/v0.7.0-1787950285/RPIF_v0.7.0.ldr",
-  "image_filename": "iot-gateway-bundle-raspberrypi3-20260828205010.raucb",
-  "image_size_bytes": 44083625,
-  "final_image_path": "/home/pg3930/capstone1/raceiotprj/scripts/Build_image/RPIF_v0.7.0.ldr",
-  "final_image_filename": "RPIF_v0.7.0.ldr",
-  "final_image_size_bytes": 44083937,
+  "download_url": "https://github.com/Pavan-githu/meta-userapp-package/releases/download/v0.8.0-1787988003/RPIF_v0.8.0.ldr",
+  "image_filename": "iot-gateway-bundle-raspberrypi3-20260829071849.raucb",
+  "image_size_bytes": 44087721,
+  "final_image_path": "/home/pg3930/capstone1/raceiotprj/scripts/Build_image/RPIF_v0.8.0.ldr",
+  "final_image_filename": "RPIF_v0.8.0.ldr",
+  "final_image_size_bytes": 44088033,
   "header": {
     "magic": "RPIF",
-    "sha256": "53837211ce935636f6c2d395fc71d7e9a8d0d58ca8d74187c09f8a3fce98d0ad",
-    "payload_size": 44083625,
-    "hdr_crc32": "0xf16ecbb1"
+    "sha256": "aed29727eadf77bce03249ddb9b984a5d7bf28c4174829aa70fd3f8fdd3a7347",
+    "payload_size": 44087721,
+    "hdr_crc32": "0x81253eae"
   },
-  "signed_image_path": "/home/pg3930/capstone1/raceiotprj/build/tmp/deploy/images/raspberrypi3/iot-gateway-bundle-raspberrypi3-20260828205010.raucb",
-  "signed_image_filename": "iot-gateway-bundle-raspberrypi3-20260828205010.raucb",
-  "raucb_sha256": "53837211ce935636f6c2d395fc71d7e9a8d0d58ca8d74187c09f8a3fce98d0ad",
-  "hsm_signature": "37c47ca9586da690d7cdebbddbbcafe868abf5da423e37a21725325e511a4150f159cb7b43b8282418c925439c1d810e95baf3bddf8b1ff0c46fa7c0b0cdbe82cd21666db4fe5162cd01eb4aa103e487381956e85f00908daf1a3d1b0d4fbe3f6aebd0bf1bcf049a833c1a32842f0fd9e7e02b924c6d7715a556c4a779fbfed2e9d9d0d87f5246613e179474d7005ad7c5b2fdd782b20f3a5b1bf2cc33920304263bd0ac98f12054ef5a7fc937ea0fba31009ad4d6c95c37e4b7f2d9aec335b797460af6effe2c722be4e11aaed5350ee728ddaa816668afe168b25f5c12e8d964252f84c8ed0ddc7fd0b0bbe8df394eace3666aea2abfa24cb320b8aecf1c7c",
+  "signed_image_path": "/home/pg3930/capstone1/raceiotprj/build/tmp/deploy/images/raspberrypi3/iot-gateway-bundle-raspberrypi3-20260829071849.raucb",
+  "signed_image_filename": "iot-gateway-bundle-raspberrypi3-20260829071849.raucb",
+  "raucb_sha256": "aed29727eadf77bce03249ddb9b984a5d7bf28c4174829aa70fd3f8fdd3a7347",
+  "hsm_signature": "117219a8f4af0794001fde8c5f9f0fb0a6fffa56f7ca544ccb90c1b984a1b7535bc56c97627abb545edd6698cb9657be73dc614e5d1769a561baa47fdd26f4c01115fb7dbad73599515e0b6d4f67e3ac0f69e6df9a994ce47d029d5dddd3adf86e2c947426f3bcc00236417030559d87ac742f4f5fcc6d1d301c8316d9ef554f6ddc0fbb4e48a1b13344e7d8c6c20385605f70f643f6d6234f628e2f802199f3839cd440647505750b94a9dbcc26a8f14f6282e47a05b2fabfefc049f26e4ff343676ca7243a7084290b1540af308952b09790b47ede53a7dc0b19f6c88431fe5936e10afa602ff8e9f05fa6166202a89c3d54d24f1572616ee9c1f896858a53",
   "hsm_key_id": "projects/project-9d4ab863-a976-47a2-9f2/locations/global/keyRings/firmware-signing/cryptoKeys/firmware-key/cryptoKeyVersions/1",
   "hsm_algorithm": "RSA_SIGN_PSS_2048_SHA256",
-  "sig_file": "/home/pg3930/capstone1/raceiotprj/scripts/Build_image/iot-gateway-bundle-raspberrypi3-0.7.0.ldr.sig",
+  "sig_file": "/home/pg3930/capstone1/raceiotprj/scripts/Build_image/iot-gateway-bundle-raspberrypi3-0.8.0.ldr.sig",
   "pubkey_file": "/home/pg3930/capstone1/raceiotprj/scripts/Build_image/fw-signer-pubkey.pem",
   "rpis_tail": {
     "sig_alg": "RSA_SIGN_PSS_2048_SHA256",
     "sig_len": 256,
-    "tail_offset": 44083673
+    "tail_offset": 44087769
   }
 }
